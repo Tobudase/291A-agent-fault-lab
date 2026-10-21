@@ -10,7 +10,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from .env import FLIP, STALE_MARKET
+from .env import FLIP, MARKET, STALE_MARKET
 
 TIMEOUT_S = float(os.getenv("FAULT_TIMEOUT_S", "5"))
 
@@ -50,10 +50,15 @@ class Fault:
         return Fault(self.name, self.kind, self.target)
 
 
-def schedule(task):
-    """The fault schedule applied to every task (identical for every method)."""
+def schedule(task, extra=False):
+    """The fault schedule applied to every task (identical for every method).
+
+    extra=True adds R-distractor: the same wrong-rating fault, but on a ticker the task does NOT select
+    (outside the requested sector). The dependency graph still says everything downstream depends on it,
+    yet nothing should change - this is the case that separates coarse from fine-grained dependency tracking.
+    Tasks whose candidates are all in-sector (T1) get no distractor fault."""
     r = f"research:{task.target_ticker}"
-    return [
+    faults = [
         Fault("R-incorrect", "incorrect", r),
         Fault("R-stale", "stale", r),
         Fault("R-timeout", "timeout", r),
@@ -62,6 +67,11 @@ def schedule(task):
         Fault("R-ipi", "ipi", r),
         Fault("P-malicious", "malicious", "plan"),
     ]
+    if extra:
+        d = next((t for t in task.tickers if MARKET[t]["sector"] != task.sector), None)
+        if d:
+            faults.append(Fault("R-distractor", "incorrect", f"research:{d}"))
+    return faults
 
 
 def tool_hook(fault):

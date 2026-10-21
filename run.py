@@ -15,6 +15,7 @@ from mas.faults import schedule
 from mas.metrics import episode
 from mas.recovery import METHODS
 from mas.tasks import TASKS, TASKS_BY_ID
+from mas.trace import Node, Trace
 from mas.workflow import run_workflow
 
 
@@ -31,9 +32,24 @@ def timed(fn, *a, **kw):
     return r, time.time() - t0
 
 
+def load_row(out, task, fault_name, method):
+    """Saved (trace, row) of a finished episode, or None. Used by --resume."""
+    p = os.path.join(out, task.id, fault_name, method, "trace.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        d = json.load(open(p))
+        tr = Trace(task.id)
+        for n in d["trace"]["nodes"]:
+            tr.add(Node(**n))
+        return tr, d["metrics"]
+    except Exception:
+        return None
+
+
 def record(out, task, trace, world, m, method, fault=None):
     name = fault.name if fault else "clean"
-    row = {"task": task.id, "fault": name, "method": method,
+    row = {"task": task.id, "fault": name, "method": method, "model": llm.MODEL,
            "kind": fault.kind if fault else "-", "category": fault.category if fault else "-",
            "stage": fault.stage if fault else "-", **m}
     save(out, task, name, method, trace, world, row)
@@ -42,8 +58,13 @@ def record(out, task, trace, world, m, method, fault=None):
     return row
 
 
-def run_clean(task, methods, out):
+def run_clean(task, methods, out, resume=False):
     """Clean baseline (and verification on clean input -> false-alarm rate)."""
+    if resume:
+        saved = [load_row(out, task, "clean", m) for m in ["none"] + (["verify"] if "verify" in methods else [])]
+        if all(saved):
+            print(f"[{task.id}] clean        (resumed)", flush=True)
+            return saved[0][0], saved[0][1]["safe_success"], [x[1] for x in saved]
     world = World(task.client_id, task.cash)
     clean, lat = timed(run_workflow, task, world)
     m = episode(task, clean, world, lat)
@@ -55,7 +76,13 @@ def run_clean(task, methods, out):
     return clean, m["safe_success"], rows
 
 
-def run_fault(task, fault, clean, clean_ok, methods, out):
+def run_fault(task, fault, clean, clean_ok, methods, out, resume=False):
+    if resume:  # whole (task, fault) job is skipped only if every requested method finished
+        need = ["none"] + [m for m in ("restart", "verify", "selective") if m in methods]
+        saved = [load_row(out, task, fault.name, m) for m in need]
+        if all(saved):
+            print(f"[{task.id}] {fault.name:12s} (resumed)", flush=True)
+            return [x[1] for x in saved]
     rows = []
     # 1) Faulty run without recovery: measures propagation.
     f = fault.fresh()
@@ -90,21 +117,44 @@ def main():
     ap.add_argument("--faults", default="all", help="comma-separated fault names or 'all'")
     ap.add_argument("--methods", default="none,restart,verify", help="none,restart,verify,selective")
     ap.add_argument("--out", default=f"runs/{time.strftime('%m%d-%H%M')}")
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=2, help="parallel episodes (lower it if you see 429s)")
+    ap.add_argument("--resume", action="store_true", help="skip episodes already saved under --out")
+    ap.add_argument("--extra-faults", action="store_true", help="add R-distractor (wrong rating on a ticker the task ignores)")
     a = ap.parse_args()
     tasks = TASKS if a.tasks == "all" else [TASKS_BY_ID[t] for t in a.tasks.split(",")]
     faults = None if a.faults == "all" else set(a.faults.split(","))
     methods = set(a.methods.split(","))
     os.makedirs(a.out, exist_ok=True)
-    print(f"model={llm.MODEL} base_url={llm.BASE_URL} out={a.out}")
+    print(f"model={llm.MODEL} base_url={llm.BASE_URL} temperature={llm.TEMPERATURE} "
+          f"reasoning_effort={llm.REASONING_EFFORT} out={a.out}", flush=True)
+    failures = []
+
+    def safe(fn, label, *args):
+        try:
+            return fn(*args)
+        except Exception as e:  # one API hiccup must not kill a 140-episode run; rerun with --resume
+            failures.append(f"{label}: {type(e).__name__}: {e}")
+            print(f"[FAILED] {label}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            return None
+
+    t0 = time.time()
     with ThreadPoolExecutor(a.workers) as ex:
-        cleans = list(ex.map(lambda t: run_clean(t, methods, a.out), tasks))
-        jobs = [(t, f, c[0], c[1]) for t, c in zip(tasks, cleans)
-                for f in schedule(t) if faults is None or f.name in faults]
-        results = [c[2] for c in cleans] + list(ex.map(lambda j: run_fault(*j, methods, a.out), jobs))
+        cleans = list(ex.map(lambda t: safe(run_clean, f"{t.id} clean", t, methods, a.out, a.resume), tasks))
+        jobs = [(t, f, c[0], c[1]) for t, c in zip(tasks, cleans) if c
+                for f in schedule(t, a.extra_faults) if faults is None or f.name in faults]
+        faulty = list(ex.map(lambda j: safe(run_fault, f"{j[0].id} {j[1].name}", *j, methods, a.out, a.resume), jobs))
+    results = [c[2] for c in cleans if c] + [r for r in faulty if r]
     with open(os.path.join(a.out, "results.jsonl"), "w") as f:
         for row in (r for rows in results for r in rows):
             f.write(json.dumps(row) + "\n")
+    s = llm.STATS
+    print(f"\nwall={time.time() - t0:.0f}s calls={s['calls']} prompt_tok={s['prompt_tokens']} "
+          f"completion_tok={s['completion_tokens']} (reasoning {s['reasoning_tokens']}) retries={s['retries']} "
+          f"est_cost=${llm.estimate_cost():.2f}")
+    if failures:
+        with open(os.path.join(a.out, "failures.log"), "w") as f:
+            f.write("\n".join(failures) + "\n")
+        print(f"{len(failures)} episode(s) failed (see {a.out}/failures.log). Re-run the same command with --resume.")
     print(f"wrote {a.out}/results.jsonl  ->  python summarize.py {a.out}")
 
 

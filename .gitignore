@@ -2,3 +2,7 @@ ref
 .venv/
 __pycache__/
 runs/scratch/
+runs/scratch/
+runs/smoke/
+.env
+*.key
