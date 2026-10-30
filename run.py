@@ -1,6 +1,8 @@
 """Experiment harness: clean baseline + fault schedule x recovery methods.
 
   python run.py --tasks T1 --faults R-incorrect --methods none,restart,verify --out runs/smoke
+  python run.py --faults R-incorrect,R-distractor --out runs/control         # relevance control
+  python run.py --faults E-timeout --cash ample --out runs/etimeout-ample      # controlled duplicate-order test
 """
 import argparse
 import copy
@@ -9,7 +11,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from mas import llm
+from mas import llm, tasks as tasks_mod
 from mas.env import World
 from mas.faults import schedule
 from mas.metrics import episode
@@ -17,6 +19,9 @@ from mas.recovery import METHODS
 from mas.tasks import TASKS, TASKS_BY_ID
 from mas.trace import Node, Trace
 from mas.workflow import run_workflow
+
+
+HARNESS = "v2"  # v2: JSON repair/re-ask protocol, fail-closed verifier, buy-bound E-timeout, new metrics
 
 
 def save(out, task, fault_name, method, trace, world, metrics):
@@ -39,6 +44,8 @@ def load_row(out, task, fault_name, method):
         return None
     try:
         d = json.load(open(p))
+        if d["metrics"].get("harness") != HARNESS:  # never mix episodes from another harness version
+            return None
         tr = Trace(task.id)
         for n in d["trace"]["nodes"]:
             tr.add(Node(**n))
@@ -49,7 +56,8 @@ def load_row(out, task, fault_name, method):
 
 def record(out, task, trace, world, m, method, fault=None):
     name = fault.name if fault else "clean"
-    row = {"task": task.id, "fault": name, "method": method, "model": llm.MODEL,
+    row = {"task": task.id, "fault": name, "method": method, "model": llm.MODEL, "harness": HARNESS,
+           "cash_mode": tasks_mod.CASH_MODE,
            "kind": fault.kind if fault else "-", "category": fault.category if fault else "-",
            "stage": fault.stage if fault else "-", **m}
     save(out, task, name, method, trace, world, row)
@@ -117,16 +125,25 @@ def main():
     ap.add_argument("--faults", default="all", help="comma-separated fault names or 'all'")
     ap.add_argument("--methods", default="none,restart,verify", help="none,restart,verify,selective")
     ap.add_argument("--out", default=f"runs/{time.strftime('%m%d-%H%M')}")
-    ap.add_argument("--workers", type=int, default=2, help="parallel episodes (lower it if you see 429s)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="parallel episodes (default 1: parallel episodes on a shared API cause rate-limit waits)")
     ap.add_argument("--resume", action="store_true", help="skip episodes already saved under --out")
     ap.add_argument("--extra-faults", action="store_true", help="add R-distractor (wrong rating on a ticker the task ignores)")
+    ap.add_argument("--cash", choices=["legacy", "ample"], default=tasks_mod.CASH_MODE,
+                    help="starting cash: legacy = budget+5000 (Phase 1 runs); ample = 2x budget, so a duplicate buy "
+                         "always fits (controlled E-timeout). Do not mix modes in one --out folder.")
     a = ap.parse_args()
+    tasks_mod.CASH_MODE = a.cash
     tasks = TASKS if a.tasks == "all" else [TASKS_BY_ID[t] for t in a.tasks.split(",")]
     faults = None if a.faults == "all" else set(a.faults.split(","))
+    extra = a.extra_faults or bool(faults and "R-distractor" in faults)  # naming the control is enough
     methods = set(a.methods.split(","))
     os.makedirs(a.out, exist_ok=True)
+    stale = os.path.join(a.out, "failures.log")
+    if os.path.exists(stale):  # from an earlier attempt; rewritten below if this run has failures
+        os.remove(stale)
     print(f"model={llm.MODEL} base_url={llm.BASE_URL} temperature={llm.TEMPERATURE} "
-          f"reasoning_effort={llm.REASONING_EFFORT} out={a.out}", flush=True)
+          f"reasoning_effort={llm.REASONING_EFFORT} cash={a.cash} workers={a.workers} out={a.out}", flush=True)
     failures = []
 
     def safe(fn, label, *args):
@@ -141,7 +158,7 @@ def main():
     with ThreadPoolExecutor(a.workers) as ex:
         cleans = list(ex.map(lambda t: safe(run_clean, f"{t.id} clean", t, methods, a.out, a.resume), tasks))
         jobs = [(t, f, c[0], c[1]) for t, c in zip(tasks, cleans) if c
-                for f in schedule(t, a.extra_faults) if faults is None or f.name in faults]
+                for f in schedule(t, extra) if faults is None or f.name in faults]
         faulty = list(ex.map(lambda j: safe(run_fault, f"{j[0].id} {j[1].name}", *j, methods, a.out, a.resume), jobs))
     results = [c[2] for c in cleans if c] + [r for r in faulty if r]
     with open(os.path.join(a.out, "results.jsonl"), "w") as f:
@@ -150,6 +167,7 @@ def main():
     s = llm.STATS
     print(f"\nwall={time.time() - t0:.0f}s calls={s['calls']} prompt_tok={s['prompt_tokens']} "
           f"completion_tok={s['completion_tokens']} (reasoning {s['reasoning_tokens']}) retries={s['retries']} "
+          f"backoff={s['backoff_s']:.0f}s "
           f"est_cost=${llm.estimate_cost():.2f}")
     if failures:
         with open(os.path.join(a.out, "failures.log"), "w") as f:

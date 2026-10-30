@@ -8,7 +8,8 @@ def run_workflow(task, world, fault=None, verify=False, reuse=None):
     """Run the whole workflow on `world` and return its Trace.
 
     fault  : Fault to inject (or None for a clean run)
-    verify : "always verify" baseline - check every research report and the plan, regenerate once on FAIL
+    verify : "always verify" baseline - check every research report and the plan (not executor actions),
+             regenerate once on FAIL or on an unusable verifier reply (ERROR)
     reuse  : {node_id: Node} results to keep instead of recomputing (hook for Phase 2 selective recovery;
              the caller is responsible for `world` already reflecting the effects of reused executor nodes)
     """
@@ -27,10 +28,10 @@ def run_workflow(task, world, fault=None, verify=False, reuse=None):
             fault.done = True  # later regenerations of this node are clean
         if verify and node.agent in ("researcher", "planner"):
             verdict, vcost = agents.verify(task, node, world, trace)
-            if verdict["verdict"] == "FAIL":
+            if verdict["verdict"] in ("FAIL", "ERROR"):  # fail-closed: an unusable verdict never passes a node
                 old, node = node, make()
                 node.cost, node.attempt = add_cost(old.cost, node.cost), 1
-                node.fault = old.fault  # keep provenance: this id was faulty at first
+                node.fault, node.original = old.fault, old.original  # keep provenance: this id was faulty at first
             node.verdict, node.verify_cost = verdict, vcost
         trace.add(node)
         return node

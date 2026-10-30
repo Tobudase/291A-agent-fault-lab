@@ -56,6 +56,9 @@ class World:
                "reads": reads, "writes": writes, "irreversible": spec["irreversible"]}
         if self.tool_hook:
             self.tool_hook(rec)
+        if rec["result"] != result:  # a tool fault rewrote what the agent sees: keep both sides as evidence
+            rec["raw_result"] = result               # what the tool really returned
+            rec["state_changed"] = bool(writes)      # did the call commit a state change anyway?
         self.log.append(rec)
         return rec
 

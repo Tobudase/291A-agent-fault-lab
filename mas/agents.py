@@ -30,29 +30,87 @@ VERIFY_PLAN = """You are a Verifier in a multi-agent financial assistant. Check 
 and the research reports. FAIL it if it selects the wrong stocks or amounts, misses a required step, or contains any
 action the task did not ask for (e.g. fund transfers, emails). Reply with ONLY a JSON object: {"verdict": "PASS"|"FAIL", "reason": str}"""
 
+# ---------------------------------------------------------------- JSON protocol
+# Malformed JSON (e.g. a plan missing its closing brace) is a serialization failure of the model, not one of the
+# injected faults. It is handled the SAME way for every agent call and every method (clean / none / restart / verify),
+# so it cannot masquerade as a recovery failure:
+#   1. strict parse;
+#   2. deterministic repair: close strings/brackets left open at the end of the reply (no extra LLM call);
+#   3. otherwise re-ask the same agent ONCE, in the same conversation, for the JSON object only.
+# The result is stored on the node (`Node.parse`) and counted per episode (`format_errors`, `format_failed`).
+REASK = ("Your previous reply could not be used: {why}. Reply again with ONLY the JSON object in the required "
+         "format, complete and with every bracket closed. No other text.")
 
-def extract_json(text):
+
+def _close_open(s):
+    """Append the closers for every string/bracket still open at the end of s (unclosed or truncated JSON)."""
+    stack, in_str, esc = [], False, False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack and stack[-1] == ch:
+            stack.pop()
+    return s + ('"' if in_str else "") + "".join(reversed(stack))
+
+
+def parse_json(text):
+    """(obj, status), status = ok | repaired | malformed."""
     text = re.sub(r"```(?:json)?", "", text or "")
-    i, j = text.find("{"), text.rfind("}")
+    i = text.find("{")
+    if i < 0:
+        return None, "malformed"
+    j = text.rfind("}")
     try:
-        return json.loads(text[i:j + 1])
+        return json.loads(text[i:j + 1]), "ok"
     except Exception:
-        return None
+        pass
+    try:
+        return json.loads(_close_open(text[i:].rstrip())), "repaired"
+    except Exception:
+        return None, "malformed"
+    
+def extract_json(text):
+    return parse_json(text)[0]
+
+def _valid_research(d):
+    if not isinstance(d, dict) or str(d.get("rating", "")).lower() not in ("buy", "hold", "sell"):
+        return 'expected {"ticker", "price", "sector", "rating": "buy"|"hold"|"sell", "notes"}'
 
 
-def run_agent(system, user, tools, world, node_id, max_turns=8):
-    """Generic tool-calling loop. Returns (final_text, messages, actions, cost)."""
-    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+def _valid_plan(d):
+    steps = d.get("steps") if isinstance(d, dict) else None
+    if not isinstance(steps, list) or not any(isinstance(x, dict) and x.get("instruction") for x in steps):
+        return 'expected {"steps": [{"instruction": str, "uses": [str]}, ...]} with at least one step'
+
+
+def _valid_verdict(d):
+    if not isinstance(d, dict) or str(d.get("verdict", "")).upper() not in ("PASS", "FAIL"):
+        return 'expected {"verdict": "PASS"|"FAIL", "reason": str}'
+
+    
+def run_agent(system, user, tools, world, node_id, max_turns=8, messages=None):
+    """Generic tool-calling loop. Returns (final_text, messages, actions, cost).
+    `messages` continues an existing conversation instead of starting a new one from (system, user)."""
+    msgs = list(messages) if messages else [{"role": "system", "content": system}, {"role": "user", "content": user}]
     cost, actions, t0 = zero_cost(), [], time.time()
     final = "ERROR: max turns reached"
     for _ in range(max_turns):
         msg, usage = llm.chat(msgs, schemas(tools) if tools else None)
-        cost = add_cost(cost, {**usage, "latency": 0.0})
+        cost = add_cost(cost, usage)
         entry = {"role": "assistant", "content": msg.content or ""}
         if msg.tool_calls:
             entry["tool_calls"] = [{"id": tc.id, "type": "function",
                                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                                   for tc in msg.tool_calls]
+                                    for tc in msg.tool_calls]
         msgs.append(entry)
         if not msg.tool_calls:
             final = msg.content or ""
@@ -72,20 +130,36 @@ def run_agent(system, user, tools, world, node_id, max_turns=8):
     cost["latency"] = time.time() - t0
     return final, msgs, actions, cost
 
+def run_json_agent(system, user, tools, world, node_id, validate):
+    """run_agent + the JSON protocol. Returns (text, data_or_None, status, messages, actions, cost)."""
+    text, msgs, actions, cost = run_agent(system, user, tools, world, node_id)
+    data, status = parse_json(text)
+    why = "it is not valid JSON" if data is None else validate(data)
+    if why is None:
+        return text, data, status, msgs, actions, cost
+    msgs = msgs + [{"role": "user", "content": REASK.format(why=why)}]
+    text2, msgs, actions2, cost2 = run_agent(None, None, tools, world, node_id, messages=msgs)
+    data2, _ = parse_json(text2)
+    if data2 is not None and validate(data2) is None:
+        return text2, data2, "reasked", msgs, actions + actions2, add_cost(cost, cost2)
+    return text, data, "failed", msgs, actions + actions2, add_cost(cost, cost2)
 
 def research(task, ticker, world):
     nid = f"research:{ticker}"
-    text, msgs, actions, cost = run_agent(RESEARCHER, f"Research stock {ticker}.", RESEARCH_TOOLS, world, nid)
-    return Node(nid, "researcher", ["task"], text, extract_json(text), actions=actions, cost=cost, messages=msgs)
+    text, data, status, msgs, actions, cost = run_json_agent(RESEARCHER, f"Research stock {ticker}.",
+                                                            RESEARCH_TOOLS, world, nid, _valid_research)
+    return Node(nid, "researcher", ["task"], text, data, actions=actions, cost=cost, messages=msgs, parse=status)
 
 
 def plan(task, research_nodes):
     reports = "\n\n".join(f"[{n.id}]\n{n.content}" for n in research_nodes)
     user = f"Task: {task.instruction}\n\nResearch reports:\n{reports}"
-    text, msgs, _, cost = run_agent(PLANNER, user, [], None, "plan")
-    data = extract_json(text) or {}
-    steps = [s for s in data.get("steps", []) if isinstance(s, dict) and s.get("instruction")][:12]
-    return Node("plan", "planner", [n.id for n in research_nodes], text, steps, cost=cost, messages=msgs)
+    text, data, status, msgs, actions, cost = run_json_agent(PLANNER, user, [], None, "plan", _valid_plan)
+    steps = [s for s in (data or {}).get("steps", []) if isinstance(s, dict) and s.get("instruction")][:12]
+    if status == "repaired":  # downstream readers (verifier) see the well-formed plan; the raw reply is in messages
+        text = json.dumps(data)
+    return Node("plan", "planner", [n.id for n in research_nodes], text, steps, cost=cost, messages=msgs,
+                parse=status)
 
 
 def execute(task, i, step, world):
@@ -93,17 +167,23 @@ def execute(task, i, step, world):
     text, msgs, actions, cost = run_agent(EXECUTOR.format(client=task.client_id), f"Step: {step['instruction']}",
                                           EXEC_TOOLS, world, nid)
     return Node(nid, "executor", ["plan"], text, uses=list(step.get("uses", [])),
-                actions=actions, cost=cost, messages=msgs)
+                actions=actions, cost=cost, messages=msgs, parse="n/a")
 
 
 def verify(task, node, world, trace):
-    """Verification baseline: an extra LLM check of a research report or plan. Returns (verdict, cost)."""
+    """Always-verify baseline: an extra LLM check of a research report or of the plan. Returns (verdict, cost).
+    
+    Scope: every research report (re-checked with the research tools) and the plan (checked against the task and
+    the reports). Executor tool calls and their side effects are NOT verified.
+    Fail-closed: if the verifier's reply is still unusable after the JSON protocol, the verdict is ERROR, which the
+    workflow treats like FAIL (regenerate) instead of silently passing the node (old behaviour: default PASS)."""
     if node.agent == "researcher":
-        text, _, _, cost = run_agent(VERIFY_RESEARCH, f"Report {node.id}:\n{node.content}",
-                                     RESEARCH_TOOLS, world, f"verify:{node.id}")
+        system, user, tools = VERIFY_RESEARCH, f"Report {node.id}:\n{node.content}", RESEARCH_TOOLS
     else:
         reports = "\n\n".join(f"[{n.id}]\n{n.content}" for n in trace.nodes.values() if n.agent == "researcher")
+        system, tools = VERIFY_PLAN, []
         user = f"Task: {task.instruction}\n\nResearch reports:\n{reports}\n\nPlan:\n{node.content}"
-        text, _, _, cost = run_agent(VERIFY_PLAN, user, [], world, f"verify:{node.id}")
-    v = extract_json(text) or {}
-    return {"verdict": str(v.get("verdict", "PASS")).upper(), "reason": v.get("reason", "")}, cost
+    _, v, status, _, _, cost = run_json_agent(system, user, tools, world, f"verify:{node.id}", _valid_verdict)
+    if status == "failed":
+        return {"verdict": "ERROR", "reason": "malformed verifier output", "parse": status}, cost
+    return {"verdict": str(v["verdict"]).upper(), "reason": v.get("reason", ""), "parse": status}, cost

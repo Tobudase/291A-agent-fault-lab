@@ -1,9 +1,9 @@
-"""Thin wrapper around any OpenAI-compatible chat endpoint (local vLLM or UCSD TritonAI).
+"""Thin wrapper around any OpenAI-compatible chat endpoint (UCSD TritonAI by default, or a local server).
 
 Environment variables (LLM_* wins, OPENAI_* is the fallback, so it works out of the box in UCSD DataHub):
-  LLM_BASE_URL / OPENAI_BASE_URL   endpoint, default http://localhost:8001/v1
+  LLM_BASE_URL / OPENAI_BASE_URL   endpoint, default https://tritonai-api.ucsd.edu/v1
   LLM_API_KEY  / OPENAI_API_KEY    key, default EMPTY
-  LLM_MODEL                        model id, e.g. api-glm-5.3
+  LLM_MODEL                        model id, default api-muse-glimmer-30b (the Phase 1 model)
   LLM_TEMPERATURE                  default 0
   LLM_REASONING_EFFORT             optional: low | high | max (reasoning models such as GLM-5.3)
   LLM_EXTRA_BODY                   optional JSON merged into the request body (e.g. chat_template_kwargs)
@@ -19,8 +19,8 @@ import time
 import openai
 from openai import OpenAI
 
-BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "http://localhost:8001/v1"
-MODEL = os.getenv("LLM_MODEL") or "qwen3.8-27b"
+BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://tritonai-api.ucsd.edu/v1"
+MODEL = os.getenv("LLM_MODEL") or "api-muse-glimmer-30b"
 API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "EMPTY"
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 NO_THINK = os.getenv("LLM_NO_THINK", "0") == "1"
@@ -39,7 +39,7 @@ _OPEN_THINK = re.compile(r"^.*?</think>", re.S)  # template already opened <thin
  
 # Running totals for this process (guarded by a lock).
 STATS = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "retries": 0,
-         "truncated": 0}  # truncated = replies cut off at the token limit (finish_reason == "length")
+         "truncated": 0, "backoff_s": 0.0}  # truncated = replies cut off at the token limit (finish_reason == "length")
 _lock = threading.Lock()
  
  
@@ -95,9 +95,12 @@ def chat(messages, tools=None, retries=None):
     if EXTRA_BODY:
         kwargs["extra_body"] = EXTRA_BODY
     attempts = retries or RETRIES
+    backoff, n_retries = 0.0, 0  # time lost to failed attempts + sleeps (service-side throttling, not our workload)
     for attempt in range(attempts):
+        t0 = time.time()
         try:
             r = _client.chat.completions.create(**kwargs)
+            api_s = time.time() - t0
             break
         except Exception as e:
             if attempt == attempts - 1 or not _retryable(e):
@@ -108,6 +111,9 @@ def chat(messages, tools=None, retries=None):
                 wait = max(wait, float(ra))
             with _lock:
                 STATS["retries"] += 1
+                STATS["backoff_s"] += (time.time() - t0) + wait
+            n_retries += 1
+            backoff += (time.time() - t0) + wait
             time.sleep(wait)
     msg, u = r.choices[0].message, r.usage
     if msg.content and "think>" in msg.content:  # some servers leave the reasoning in the content
@@ -125,4 +131,5 @@ def chat(messages, tools=None, retries=None):
         STATS["reasoning_tokens"] += rt
         if getattr(r.choices[0], "finish_reason", None) == "length":
             STATS["truncated"] += 1
-    return msg, {"calls": 1, "prompt_tokens": pt, "completion_tokens": ct}
+    return msg, {"calls": 1, "prompt_tokens": pt, "completion_tokens": ct,
+                 "api_s": api_s, "backoff_s": backoff, "retries": n_retries}

@@ -203,9 +203,6 @@ def step_report(a, env, run_dir):
     others = sorted(d for d in glob.glob(os.path.join(a.out_root, "phase1-*"))
                     if os.path.isdir(d) and d != run_dir and os.path.exists(os.path.join(d, "results.jsonl"))
     )
-    ref = os.path.join(HERE, "runs", "phase1-qwen27b")  # earlier 27B run on the lab server, kept as a reference
-    if os.path.exists(os.path.join(ref, "results.jsonl")) and ref not in others and a.compare_reference:
-        others.append(ref)
     sh([sys.executable, "figures.py", run_dir] + others + ["--out", os.path.join(a.out_root, "figs-compare")], env)
     # one zip with everything needed for the report (tables, figures, raw results, traces)
     archive = shutil.make_archive(run_dir.rstrip("/") + "_results", "zip", os.path.dirname(run_dir),
@@ -227,12 +224,10 @@ def main():
     ap.add_argument("--faults", default="all")
     ap.add_argument("--methods", default="none,restart,verify")
     ap.add_argument("--extra-faults", action="store_true", help="add the R-distractor fault")
-    ap.add_argument("--workers", type=int, default=None, help="parallel episodes (default: 4 on GPU, 1 on CPU)")
+    ap.add_argument("--workers", type=int, default=None, help="parallel episodes (default: 1 for the API, 4 on GPU, 1 on CPU)")
     ap.add_argument("--ctx", type=int, default=8192, help="Ollama context length")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per LLM call before retrying")
     ap.add_argument("--out-root", default="runs", help="e.g. /content/drive/MyDrive/291A-runs on Colab")
-    ap.add_argument("--no-reference", dest="compare_reference", action="store_false",
-                    help="do not add the earlier runs/phase1-qwen (27B) run to the cross-model figure")
     ap.add_argument("--force", action="store_true", help="continue even if preflight/smoke fail")
     a = ap.parse_args()
 
@@ -252,7 +247,7 @@ def main():
         sys.exit(f"preset {a.model} has no {a.backend} model; pick another --backend or --model")
     gpu = has_gpu()
     if a.workers is None:
-        a.workers = 4 if a.backend == "api" or gpu else 1
+        a.workers = 1 if a.backend == "api" else (4 if gpu else 1)  # API: parallel episodes trigger rate limits
     a.out_root = os.path.abspath(a.out_root)
     run_dir = os.path.join(a.out_root, f"phase1-{slug(a.model if a.model in PRESETS else model)}")
     steps = ["preflight", "smoke", "full", "report"] if a.steps == "all" else a.steps.split(",")

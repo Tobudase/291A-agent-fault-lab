@@ -3,11 +3,19 @@ from dataclasses import asdict, dataclass, field
 
 
 def zero_cost():
-    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "latency": 0.0}
+    # api_s = time inside successful LLM requests; backoff_s = time lost to rate-limit / server-error retries
+    # (failed attempts + sleeps); retries = number of such retries. All three are 0 in traces made before v2.
+    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "latency": 0.0,
+            "api_s": 0.0, "backoff_s": 0.0, "retries": 0}
 
 
 def add_cost(a, b):
-    return {k: a[k] + b[k] for k in a}
+    """Sum two cost dicts. Missing keys count as 0, so old traces (without api_s/backoff_s) still load."""
+    return {k: (a or {}).get(k, 0) + (b or {}).get(k, 0) for k in {**zero_cost(), **(a or {}), **(b or {})}}
+
+
+def tokens(cost):
+    return cost.get("prompt_tokens", 0) + cost.get("completion_tokens", 0)
 
 
 @dataclass
@@ -25,6 +33,8 @@ class Node:
     verdict: dict = None    # verifier output (verify baseline only)
     verify_cost: dict = field(default_factory=zero_cost)
     attempt: int = 0        # >0 if regenerated after a failed verification
+    original: str = None    # content BEFORE an output fault mutated it (pre/post-fault evidence)
+    parse: str = "ok"       # JSON protocol status of this agent reply: ok | repaired | reasked | failed | n/a
 
 
 def _overlap(reads, writes):

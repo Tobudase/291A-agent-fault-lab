@@ -24,12 +24,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch  # noqa: E402
 
-from analysis import (ACCIDENTAL, ADVERSARIAL, OUTCOMES, faults_in, invalidation_sets, load, load_trace,  # noqa: E402
-                      mean, outcome_counts)
+from analysis import (ACCIDENTAL, ADVERSARIAL, CONTROL, OUTCOMES, faults_in, invalidation_sets, load,  # noqa: E402
+                      load_trace, mean, outcome_counts)
 
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e1", "#fcfcfb"
 BLUE, ORANGE, AQUA, GRAY, NEUTRAL = "#2a78d6", "#eb6834", "#1baf7a", "#8f8e88", "#d4d3cd"
-OUT_COL = {"propagated": ORANGE, "absorbed": AQUA, "prevented": BLUE, "ignored": NEUTRAL}
+OUT_COL = {"propagated": ORANGE, "masked": "#f5b48f", "absorbed": AQUA, "prevented": BLUE, "ignored": NEUTRAL}
+SHOWN = ("propagated", "masked", "absorbed", "ignored")
 METH_COL = {"none": GRAY, "restart": BLUE, "verify": ORANGE, "selective": AQUA}
 MODEL_COLS = [BLUE, ORANGE, AQUA]
 
@@ -51,7 +52,8 @@ def save(fig, outdir, name):
 
 def split_faults(rows):
     present = faults_in(rows)
-    return [("Accidental faults", [x for x in present if x in ACCIDENTAL or x not in ADVERSARIAL]),
+    return [("Accidental faults", [x for x in present if x in ACCIDENTAL or x not in ADVERSARIAL + CONTROL]),
+            ("Control", [x for x in present if x in CONTROL]),
             ("Adversarial faults", [x for x in present if x in ADVERSARIAL])]
 
 
@@ -82,12 +84,13 @@ def fig_outcomes(rows, outdir):
         ax.set_axisbelow(True)
         ax.set_title(title)
     axes[0][0].set_ylabel("% of tasks")
-    handles = [Patch(facecolor=OUT_COL[o], label=o) for o in ("propagated", "absorbed", "ignored")]
-    fig.legend(handles=handles, loc="upper right", ncol=3, bbox_to_anchor=(1, 1.04))
+    handles = [Patch(facecolor=OUT_COL[o], label=o) for o in SHOWN]
+    fig.legend(handles=handles, loc="upper right", ncol=4, bbox_to_anchor=(1, 1.04))
     fig.suptitle("What each injected fault did to the task outcome (no recovery)", x=0.01, ha="left", y=1.04,
                  fontsize=10, fontweight="bold")
-    fig.text(0.01, -0.06, "propagated = outcome harmed; absorbed = downstream changed but outcome still right; "
-             "ignored = nothing downstream changed (not evidence of robustness).", fontsize=7.5, color=INK2)
+    fig.text(0.01, -0.06, "propagated = outcome harmed; masked = duplicate side effect attempted, rejected only by the "
+             "environment; absorbed = work changed but outcome right;\nignored = nothing changed (not evidence of "
+             "robustness).", fontsize=7.5, color=INK2)
     fig.tight_layout()
     save(fig, outdir, "fig3_outcomes")
 
@@ -173,7 +176,8 @@ def fig_precision(exp, rows, outdir):
 def fig_heatmap(rows, outdir):
     faults = faults_in(rows)
     tasks = sorted({r["task"] for r in rows})
-    letter = {"propagated": "P", "absorbed": "A", "ignored": "I", "not_fired": "NF", "clean_failed": "CF"}
+    letter = {"propagated": "P", "masked": "M", "absorbed": "A", "ignored": "I", "not_fired": "NF",
+              "clean_failed": "CF"}
     fig, ax = plt.subplots(figsize=(0.95 * len(faults) + 1.5, 0.5 * len(tasks) + 1.4))
     for i, t in enumerate(tasks):
         for j, f in enumerate(faults):
@@ -194,8 +198,8 @@ def fig_heatmap(rows, outdir):
     for s in ax.spines.values():
         s.set_visible(False)
     ax.set_title("Outcome per task and fault (no recovery)", pad=24)
-    handles = [Patch(facecolor=OUT_COL[o], label=f"{letter[o]} {o}") for o in ("propagated", "absorbed", "ignored")]
-    ax.legend(handles=handles, ncol=3, loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=8)
+    handles = [Patch(facecolor=OUT_COL[o], label=f"{letter[o]} {o}") for o in SHOWN]
+    ax.legend(handles=handles, ncol=4, loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=8)
     save(fig, outdir, "fig6_heatmap")
 
 

@@ -47,25 +47,33 @@ This is cheaper than a full restart and safer than verifying everything, but som
 - 3.8 **[Phase 2] Changed environment and irreversible actions**: [TODO: what cannot be rolled back, how it is detected and reported]
 
 ## 4. Experimental Setup
-- Model: Qwen3.8-27B served by vLLM (temperature 0). [TODO: switch or add the course API model if used]
-- Scale: 6 tasks × 7 faults × methods; [TODO: number of repetitions].
-- Metrics, as defined in README "Metrics": clean success, propagation outcome, unauthorized actions, affected stages,
-  wasted work, latency, tokens; for recovery: recovered correctness, recomputed/retained nodes, recovery latency,
-  inference cost, tracking overhead, unrecoverable actions; for verify: detected/false alarms.
-- Commands to reproduce: `python run.py --out runs/phase1 && python summarize.py runs/phase1`.
+- Model: Muse Glimmer 30B via UCSD TritonAI (`api-muse-glimmer-30b`), temperature 0.
+- Scale: 6 tasks × 8 faults (7 + R-distractor control) × {none, restart, verify} + clean = 156 episodes, 1 run per cell;
+  plus 30 episodes of E-timeout with `--cash ample`.
+- Metrics (README "Metrics"): clean success; outcome propagated / masked / absorbed / ignored (decisions compared with the
+  clean run, not wording); unauthorized actions; changed downstream nodes per stage; dependency vs. affected tokens
+  (not "wasted tokens"); latency with API backoff recorded separately; for recovery: correctness, recomputed nodes,
+  latency, tokens, unrecoverable actions; for verify: detected / false alarms.
+- Reproduce: README "Quick start" / RUNBOOK_PHASE1.md. Data: `runs/phase1-v2-muse-glimmer-30b`, `runs/etimeout-ample-muse`.
 
-## 5. Results — Phase 1: Propagation
-- Table 1: clean baseline (success rate, calls, tokens, latency per task). [TODO: from `runs/phase1/summary.md`]
-- Table 2: per fault, outcome distribution (propagated/absorbed/ignored), unauthorized, affected stages, wasted tokens. **Accidental and adversarial in separate blocks.**
-- Figure 2: one propagation path drawn from a real trace (e.g. R-incorrect: research:AAPL → plan → exec:1..5). [TODO]
-- Key observations: [TODO: confirm with repetitions; preliminary from `runs/phase1` (Qwen3.8-27B, 1 run each)]
-  - Clean baseline: 6/6 tasks succeed, about 14k tokens and 62 s per task.
-  - Accidental *data* faults (R-incorrect, R-stale) propagate in 6/6 tasks: the wrong rating flows research → plan → wrong buys/stop-losses (about 3.3 affected nodes on average).
-  - R-timeout is mostly ignored: the researcher just retries. This is not evidence of robust recovery.
-  - E-timeout (side effect committed but reported as timed out) propagated once through shared state (T5: the retry bought more shares, 116 instead of 75).
-  - Adversarial injection at the research stage (R-malicious, R-ipi) is filtered by the planner (0/6 unauthorized). Injection at the plan stage (P-malicious) is executed in 6/6 tasks and leads to an unauthorized, irreversible email. Stage matters: the executor trusts the plan.
-  - Restart recovers correctness 6/6 for every fault (about 14k extra tokens, about 93 s), but cannot undo the P-malicious email (1 unrecoverable action per task).
-  - Verify prevents all 6 data-fault and P-malicious failures for about 5.2k extra tokens per run (+38%) and about 1.6× latency. It does not cover executor faults (E-timeout); false alarms are rare (≤0.33 per run).
+## 5. Results — Phase 1: Propagation (final, `runs/phase1-v2-muse-glimmer-30b`)
+- Clean baseline: 6/6 safe success, 20.2 LLM calls, 20.7k tokens, 34.7 s per task; always-verify on clean input +45% tokens,
+  0 false alarms. No API retries in the run; 7 replies needed JSON repair/re-ask, 0 unusable.
+- R-incorrect / R-stale propagate 6/6: plan changes, 2.7 executor nodes change (wrong buys/stop-losses), via message and
+  shared-state edges (Figure 2: R-incorrect, T5).
+- P-malicious propagates 6/6: unauthorized, irreversible email; the executor trusts the plan.
+- Relevance control: R-distractor ignored 6/6 although the graph marks 5.3 dependent nodes.
+- R-timeout ignored 6/6: the researcher retried the lookup (retry, not robust recovery).
+- R-malicious reached the planner 6/6 and its decisions matched the clean run (0 unauthorized); R-ipi never left the
+  researcher (0/6 reports repeated it), so it does not test the planner.
+- E-timeout: buy commits, agent told "timed out": 6/6 retried, 2/6 duplicates committed, 4/6 masked (rejected only for
+  insufficient cash). With ample cash: 5/6 duplicates committed and harmed (6/6 under verify; restart recovers 6/6).
+- Dependency exposure vs. affected work: R-timeout 15.8k vs 3.1k tokens; R-distractor 15.0k vs 2.3k; R-incorrect 13.4k vs 10.9k.
+- Restart: correct for every fault except P-malicious (email unrecoverable), 2x tokens (42.0k vs 21.3k) and latency (111 vs 56 s),
+  recomputes all 8.8 nodes. Verify: 0.96 safe success, +48% tokens, detects 30/30 faulty reports/plans, 0 false alarms,
+  0/6 on E-timeout (executor actions are not verified), also repairs harmless R-distractor faults.
+- Phase 2 bridge: message edges invalidate 4.7 nodes for R-incorrect (3.7 change) and 5.3 for R-distractor (0 change);
+  declared `uses` invalidate 2.5 for R-incorrect, i.e. they under-invalidate when the plan itself changes.
 
 ## 6. Results — Recovery (Phase 1 baselines + Phase 2)
 - Table 3: restart vs. verify vs. selective under identical fault schedules, with columns for recovered correctness, unauthorized,
@@ -92,12 +100,13 @@ This is cheaper than a full restart and safer than verifying everything, but som
 ## Appendix A (Phase 1 report): Timeline & Milestones
 | date | milestone | owner |
 |---|---|---|
-| Oct 10 | repo, workflow, harness, baselines running | [TODO] |
-| Oct 20 | full Phase 1 run (`runs/phase1`), tables and figures | [TODO] |
-| Oct 28 | **Phase 1 report + code due** | all |
-| Nov 10 | selective recovery v1 (descendants + snapshot restore + reuse) | [TODO] |
-| Nov 20 | shared-state / changed-environment cases, precision vs. overhead study | [TODO] |
-| Dec 1 | final experiments frozen | [TODO] |
+| Oct 10 | repo, workflow, harness, baselines running (done) | [TODO] |
+| Oct 20 | first full Phase 1 grid, tables and figures (done) | [TODO] |
+| Oct 28 | **Phase 1 report + code due**; final Muse runs (done) | all |
+| Nov 10 | selective recovery v1: invalid set, per-node snapshots, rerun with reuse | [TODO] |
+| Nov 17 | reuse validity check vs. clean runs; compensating actions | [TODO] |
+| Nov 24 | changed-environment cases (irreversible effects, drift); precision vs. tracking overhead | [TODO] |
+| Dec 1 | final experiments frozen: selective vs. restart vs. verify, same fault schedules | [TODO] |
 | Dec 10 | **final report + code due** | all |
 
 ## Phase 1 report (1–2 pages) = a short cut of the sections above
