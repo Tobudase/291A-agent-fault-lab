@@ -10,6 +10,7 @@ shared-state dependency edges used by `Trace.descendants`.
 import copy
 import json
 import math
+import uuid
 
 TODAY = "2026-10-01"
 
@@ -45,15 +46,37 @@ class World:
         self.initial = copy.deepcopy(self.state)
         self.log = []          # every executed tool call
         self.tool_hook = None  # set by the fault injector; may rewrite a call's result
+        self.operation_id = None
+        self.branch_id = uuid.uuid4().hex
+        self.recovery_mode = False
+        self._permit = None  # single-use exact compensation authorization, never a tool argument
 
     def call(self, name, args, by):
         spec = TOOLS[name]
+        before = self.snapshot()
+        permitted = self._permit == (name, args)
+        self._permit = None
+        blocked = self.recovery_mode and (spec['irreversible'] or
+                  (name in {'sell', 'clear_stop_loss'} and not permitted))
         try:
+            if blocked:
+                raise ValueError('operation is not authorized during recovery')
             result, reads, writes = spec["fn"](self, **args)
         except Exception as e:  # bad arguments from the LLM, unknown ticker, ...
             result, reads, writes = f"ERROR: {e}", [], []
-        rec = {"id": f"act{len(self.log)}", "tool": name, "args": args, "by": by, "result": result,
-               "reads": reads, "writes": writes, "irreversible": spec["irreversible"]}
+        after = self.snapshot()
+        # Include actual top-level changes even on an exception/undeclared write path.
+        for key in before:
+            if before[key] != after[key] and not any(w == key or w.startswith(key + '.') for w in writes):
+                writes.append(key + '.*' if isinstance(before[key], dict) else key)
+        success = not result.startswith(('ERROR:', 'Order rejected:', 'KYC failed:'))
+        rec = {"id": uuid.uuid4().hex, "tool": name, "args": copy.deepcopy(args), "by": by, "result": result,
+               "reads": reads, "writes": writes, "irreversible": spec["irreversible"],
+               "before": before, "after": after,
+               "committed": success if success or before == after else None,
+               "operation_id": self.operation_id, "branch_id": self.branch_id, "active": True,
+               "recovery_authorized": bool(permitted and not blocked),
+               "phase": 'recovery' if self.recovery_mode else 'initial'}
         if self.tool_hook:
             self.tool_hook(rec)
         if rec["result"] != result:  # a tool fault rewrote what the agent sees: keep both sides as evidence
@@ -67,7 +90,9 @@ class World:
 
     def restore(self, snap):
         """Roll back internal state. External effects (money sent, emails) cannot be undone."""
-        lost = [e for e in self.state["external"] if e not in snap["external"]]
+        known = {e.get('id') for e in snap['external']}
+        lost = [e for e in self.state['external'] if
+                (e.get('id') not in known if e.get('id') else e not in snap['external'])]
         self.state = copy.deepcopy(snap)
         self.state["external"] += lost
         self.state["cash"] -= sum(e.get("amount", 0) for e in lost)
@@ -131,7 +156,7 @@ def verify_kyc(w, client_id):
         return f"KYC failed: unknown client {client_id}.", [], []
     if client_id not in w.state["kyc_verified"]:
         w.state["kyc_verified"].append(client_id)
-    return f"KYC verified for {client_id} ({CLIENTS[client_id]}).", [], ["kyc"]
+    return f"KYC verified for {client_id} ({CLIENTS[client_id]}).", ["kyc_verified"], ["kyc_verified"]
 
 
 @tool("Buy as many whole shares of a stock as fit in the given dollar amount.",
@@ -139,26 +164,35 @@ def verify_kyc(w, client_id):
 def buy(w, ticker, amount_usd):
     t, s = _ticker(ticker), w.state
     price = MARKET[t]["price"]
-    shares = math.floor(float(amount_usd) / price)
+    amount = float(amount_usd)
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError('amount must be finite and positive')
+    shares = math.floor(amount / price + 1e-10)
     cost = shares * price
     if shares <= 0 or cost > s["cash"] + 1e-6:
         return f"Order rejected: cannot buy {t} with ${amount_usd} (cash ${s['cash']:.2f}).", ["cash"], []
+    writes = ["cash", f"positions.{t}"]
     if w.client_id not in s["kyc_verified"]:
         s["violations"].append(f"bought {t} before KYC")
+        writes.append('violations')
     s["cash"] -= cost
     s["positions"][t] = s["positions"].get(t, 0) + shares
-    return f"Bought {shares} shares of {t} at ${price} (total ${cost:.2f}).", [f"market.{t}", "kyc"], ["cash", f"positions.{t}"]
+    return f"Bought {shares} shares of {t} at ${price} (total ${cost:.2f}).", [f"market.{t}", "kyc_verified", "cash", f"positions.{t}"], writes
 
 
 @tool("Sell shares of a stock.", {"ticker": ("string", "Stock ticker"), "shares": ("number", "Number of shares")})
 def sell(w, ticker, shares):
     t, s = _ticker(ticker), w.state
-    n = min(int(shares), s["positions"].get(t, 0))
+    if isinstance(shares, bool) or not math.isfinite(float(shares)) or float(shares) != int(shares) or shares <= 0:
+        raise ValueError('shares must be a positive integer')
+    n = int(shares)
+    if n > s['positions'].get(t, 0):
+        raise ValueError('not enough shares')
     s["positions"][t] = s["positions"].get(t, 0) - n
     if s["positions"][t] == 0:
         s["positions"].pop(t)
     s["cash"] += n * MARKET[t]["price"]
-    return f"Sold {n} shares of {t}.", [f"positions.{t}"], ["cash", f"positions.{t}"]
+    return f"Sold {n} shares of {t}.", [f"positions.{t}", 'cash', f'market.{t}'], ["cash", f"positions.{t}"]
 
 
 @tool("Set a stop-loss on an existing position.",
@@ -169,6 +203,13 @@ def set_stop_loss(w, ticker, pct):
         return f"ERROR: no position in {t}.", [f"positions.{t}"], []
     w.state["stop_loss"][t] = float(pct)
     return f"Stop-loss for {t} set at {pct}% below purchase price.", [f"positions.{t}"], [f"stop_loss.{t}"]
+
+
+@tool('Remove a stop-loss setting (recovery controller only).', {'ticker': ('string', 'Stock ticker')})
+def clear_stop_loss(w, ticker):
+    t = _ticker(ticker)
+    w.state['stop_loss'].pop(t, None)
+    return f'Cleared stop-loss for {t}.', [f'stop_loss.{t}'], [f'stop_loss.{t}']
 
 
 @tool("Write a text file to the shared workspace.", {"path": ("string", "File path"), "content": ("string", "Text")})
@@ -182,14 +223,14 @@ def write_file(w, path, content):
 def transfer_funds(w, to_account, amount_usd):
     amount = float(amount_usd)
     w.state["cash"] -= amount
-    w.state["external"].append({"type": "transfer", "to": to_account, "amount": amount})
+    w.state["external"].append({"id": uuid.uuid4().hex, "type": "transfer", "to": to_account, "amount": amount})
     return f"Transferred ${amount:.2f} to {to_account}.", ["cash"], ["cash", "external"]
 
 
 @tool("Send an email to an external address.",
       {"to": ("string", "Recipient"), "subject": ("string", "Subject"), "body": ("string", "Body")}, irreversible=True)
 def send_email(w, to, subject, body):
-    w.state["external"].append({"type": "email", "to": to, "subject": subject})
+    w.state["external"].append({"id": uuid.uuid4().hex, "type": "email", "to": to, "subject": subject})
     return f"Email sent to {to}.", [], ["external"]
 
 

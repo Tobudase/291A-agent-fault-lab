@@ -9,9 +9,15 @@ import copy
 import json
 import os
 import time
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-from mas import llm, tasks as tasks_mod
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).with_name('.env'))  # environment overrides .env; never print credentials
+
+from mas import llm, tasks as tasks_mod, faults as faults_mod
+from mas.agents import config_signature
 from mas.env import World
 from mas.faults import schedule
 from mas.metrics import episode
@@ -21,7 +27,13 @@ from mas.trace import Node, Trace
 from mas.workflow import run_workflow
 
 
-HARNESS = "v2"  # v2: JSON repair/re-ask protocol, fail-closed verifier, buy-bound E-timeout, new metrics
+HARNESS = "v3-recovery"
+
+
+def experiment_config():
+    return {'signature': config_signature(), 'cash_mode': tasks_mod.CASH_MODE,
+            'harness': HARNESS, 'recovery_fallbacks': 1,
+            'fault_timeout_s': faults_mod.TIMEOUT_S, 'api_timeout_s': llm.TIMEOUT, 'api_retries': llm.RETRIES}
 
 
 def save(out, task, fault_name, method, trace, world, metrics):
@@ -46,9 +58,9 @@ def load_row(out, task, fault_name, method):
         d = json.load(open(p))
         if d["metrics"].get("harness") != HARNESS:  # never mix episodes from another harness version
             return None
-        tr = Trace(task.id)
-        for n in d["trace"]["nodes"]:
-            tr.add(Node(**n))
+        if d['metrics'].get('config') != experiment_config():
+            return None
+        tr = Trace.from_dict(d['trace'])
         return tr, d["metrics"]
     except Exception:
         return None
@@ -58,6 +70,7 @@ def record(out, task, trace, world, m, method, fault=None):
     name = fault.name if fault else "clean"
     row = {"task": task.id, "fault": name, "method": method, "model": llm.MODEL, "harness": HARNESS,
            "cash_mode": tasks_mod.CASH_MODE,
+           'config': experiment_config(),
            "kind": fault.kind if fault else "-", "category": fault.category if fault else "-",
            "stage": fault.stage if fault else "-", **m}
     save(out, task, name, method, trace, world, row)
@@ -86,7 +99,7 @@ def run_clean(task, methods, out, resume=False):
 
 def run_fault(task, fault, clean, clean_ok, methods, out, resume=False):
     if resume:  # whole (task, fault) job is skipped only if every requested method finished
-        need = ["none"] + [m for m in ("restart", "verify", "selective") if m in methods]
+        need = ["none"] + [m for m in [*METHODS, 'verify'] if m in methods]
         saved = [load_row(out, task, fault.name, m) for m in need]
         if all(saved):
             print(f"[{task.id}] {fault.name:12s} (resumed)", flush=True)
@@ -103,10 +116,7 @@ def run_fault(task, fault, clean, clean_ok, methods, out, resume=False):
         if name not in methods:
             continue
         w = copy.deepcopy(world)
-        try:
-            new, stats = method(task, w, trace, f)
-        except NotImplementedError:
-            continue
+        new, stats = method(task, w, trace, f)
         rm = episode(task, new, w, stats["recovery_latency"])
         rm.update(stats, fault_outcome=m["outcome"], unauthorized_before=m["unauthorized"])
         rows.append(record(out, task, new, w, rm, name, f))
@@ -123,7 +133,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default="all", help="comma-separated task ids or 'all'")
     ap.add_argument("--faults", default="all", help="comma-separated fault names or 'all'")
-    ap.add_argument("--methods", default="none,restart,verify", help="none,restart,verify,selective")
+    ap.add_argument("--methods", default="none,restart,verify", help=','.join(['none', 'verify', *METHODS]))
     ap.add_argument("--out", default=f"runs/{time.strftime('%m%d-%H%M')}")
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel episodes (default 1: parallel episodes on a shared API cause rate-limit waits)")
@@ -138,7 +148,15 @@ def main():
     faults = None if a.faults == "all" else set(a.faults.split(","))
     extra = a.extra_faults or bool(faults and "R-distractor" in faults)  # naming the control is enough
     methods = set(a.methods.split(","))
+    unknown = methods - {'none', 'verify', *METHODS}
+    if unknown:
+        ap.error('unknown methods: ' + ','.join(sorted(unknown)))
     os.makedirs(a.out, exist_ok=True)
+    manifest = Path(a.out) / 'manifest.json'
+    config = experiment_config()
+    if manifest.exists() and json.loads(manifest.read_text()) != config:
+        ap.error('output directory has a different configuration; use a new --out directory')
+    manifest.write_text(json.dumps(config, indent=2) + '\n')
     stale = os.path.join(a.out, "failures.log")
     if os.path.exists(stale):  # from an earlier attempt; rewritten below if this run has failures
         os.remove(stale)
@@ -174,6 +192,8 @@ def main():
             f.write("\n".join(failures) + "\n")
         print(f"{len(failures)} episode(s) failed (see {a.out}/failures.log). Re-run the same command with --resume.")
     print(f"wrote {a.out}/results.jsonl  ->  python summarize.py {a.out}")
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

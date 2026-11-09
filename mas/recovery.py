@@ -1,36 +1,44 @@
-"""Recovery methods. Every method is told the identity of the faulty node (fault.target),
-so recovery quality is measured independently of fault detection."""
-import time
+"""Public strategy registry and compatibility adapters for the experiment harness."""
+import copy
 
-from .workflow import run_workflow
+from .recover.contracts import RecoveryContext
+from .recover.engine import recover
+from .recover.selective import Restart, Selective
+from .recover.change_aware import ChangeAware
+from .recover.reconcile import Reconcile
 
-
-def full_restart(task, world, trace, fault):
-    """Baseline: discard all work, roll the environment back to its initial state and rerun
-    everything without the fault. External (irreversible) effects survive the rollback."""
-    t0 = time.time()
-    lost = world.restore(world.initial)
-    new = run_workflow(task, world)
-    return new, {"recovery_latency": time.time() - t0, "recomputed": len(new.nodes), "retained": 0,
-                 "unrecoverable": len(lost), "recovery_cost": new.total_cost()}
+STRATEGIES = {}
+METHODS = {}
 
 
-def selective(task, world, trace, fault):
-    """Phase 2 TODO: dependency-aware invalidation. Must return (new_trace, stats) with the same
-    keys as `full_restart` so the harness can compare methods directly. Suggested steps:
+def register(strategy):
+    if strategy.name in METHODS:
+        raise ValueError('duplicate recovery strategy: ' + strategy.name)
+    STRATEGIES[strategy.name] = strategy
 
-    1. invalid = {fault.target} | trace.descendants(fault.target)
-       (try both state=True / state=False, and the finer `Node.uses` edges, to study
-       precision vs. bookkeeping overhead)
-    2. Undo the environment effects of invalid executor nodes: e.g. take `world.snapshot()`
-       before each executor node, or apply compensating actions (`sell` for `buy`, delete
-       written files). Count actions in `world.state["external"]` / `irreversible` tool calls
-       as unrecoverable instead of pretending they were undone.
-    3. new = run_workflow(task, world, reuse={nid: n for nid, n in trace.nodes.items() if nid not in invalid})
-       Note the plan may produce different steps after rerun; reused exec nodes must still match.
-    4. Check that reused results really remain valid (e.g. compare against a clean run).
-    """
-    raise NotImplementedError
+    def run(task, world, trace, fault):
+        old = copy.deepcopy(trace)
+        # The diagnostic identifies the failed node, not its corrected answer.
+        for node in old.nodes.values():
+            node.original = None
+            for a in node.actions:
+                a.pop('raw_result', None)
+                a.pop('state_changed', None)
+        # Preserve receipt equality without exposing injection-only oracle fields.
+        source = copy.deepcopy(world)
+        for a in source.log:
+            a.pop('raw_result', None)
+            a.pop('state_changed', None)
+        result = recover(RecoveryContext(task, old, fault.target), source, strategy)
+        if result.stats['recovery_status'] != 'stopped':
+            world.state, world.log = source.state, source.log
+        return result.trace, result.stats
+
+    METHODS[strategy.name] = run
+    return run
 
 
-METHODS = {"restart": full_restart, "selective": selective}
+full_restart = register(Restart())
+selective = register(Selective())
+change_aware = register(ChangeAware())
+reconcile = register(Reconcile())

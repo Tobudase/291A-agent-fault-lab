@@ -168,12 +168,15 @@ def main(exp):
                           f(mean(r["unauthorized"] for r in rs)), f(mean(r["total_tokens"] for r in rs), 0),
                           f(mean(r["total_latency"] for r in rs), 1), f(mean(r["total_backoff"] for r in rs), 1),
                           f(mean(r.get("recomputed") for r in rs), 1), f(mean(r.get("unrecoverable") for r in rs)),
-                          f(mean(r.get("detected") for r in rs)), f(mean(r.get("false_alarms") for r in rs))])
+                          f(mean(r.get("detected") for r in rs)), f(mean(r.get("false_alarms") for r in rs)),
+                          ', '.join(sorted({r['recovery_status'] for r in rs if 'recovery_status' in r})),
+                          f(mean(r.get('compensations') for r in rs), 1)])
         if t:
             parts.append(f"\n## Table {title}: recovery baselines (end-to-end)\n\n" + table(
                 ["fault", "method", "n", "outcome", "safe_success", "unauthorized", "total_tokens", "total_latency_s",
-                 "api_backoff_s", "recomputed", "unrecoverable", "detected", "false_alarms"], t))
-    parts.append("\n`total_*` = faulty run + recovery for restart (the raw rows only hold the rerun); for verify it is the "
+                 "api_backoff_s", "recomputed", "unrecoverable", "detected", "false_alarms",
+                 'recovery_status', 'compensations'], t))
+    parts.append("\n`total_*` = faulty run + new recovery work for every registered recovery strategy; for verify it is the "
                  "single run including verification. `detected`/`false_alarms` are only defined for verify, which "
                  "checks every research report and the plan before execution and does NOT check executor actions "
                  "(so E-timeout cannot be detected by design). `unrecoverable` = irreversible actions (e.g. an emailed "

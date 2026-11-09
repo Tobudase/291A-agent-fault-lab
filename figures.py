@@ -25,13 +25,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch  # noqa: E402
 
 from analysis import (ACCIDENTAL, ADVERSARIAL, CONTROL, OUTCOMES, faults_in, invalidation_sets, load,  # noqa: E402
-                      load_trace, mean, outcome_counts)
+                      load_trace, mean, outcome_counts, METHOD_ORDER)
 
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e1", "#fcfcfb"
 BLUE, ORANGE, AQUA, GRAY, NEUTRAL = "#2a78d6", "#eb6834", "#1baf7a", "#8f8e88", "#d4d3cd"
 OUT_COL = {"propagated": ORANGE, "masked": "#f5b48f", "absorbed": AQUA, "prevented": BLUE, "ignored": NEUTRAL}
 SHOWN = ("propagated", "masked", "absorbed", "ignored")
 METH_COL = {"none": GRAY, "restart": BLUE, "verify": ORANGE, "selective": AQUA}
+for index, name in enumerate(METHOD_ORDER):
+    METH_COL.setdefault(name, ['#8856a7', '#a6761d', '#e7298a'][index % 3])
 MODEL_COLS = [BLUE, ORANGE, AQUA]
 
 plt.rcParams.update({
@@ -101,7 +103,7 @@ def fig_cost(rows, outdir):
     clean = [r["tokens"] for r in rows if r["fault"] == "clean" and r["method"] == "none"]
     fig, axes = plt.subplots(1, len(panels), figsize=(4.0 * len(panels), 3.4), sharey=True, squeeze=False)
     for ax, (title, faults) in zip(axes[0], panels):
-        for m in ("none", "restart", "verify", "selective"):
+        for m in METHOD_ORDER:
             rs = [r for r in rows if r["fault"] in faults and r["method"] == m]
             if not rs:
                 continue

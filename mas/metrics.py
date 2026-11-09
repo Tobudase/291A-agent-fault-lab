@@ -21,6 +21,7 @@ import re
 from .env import MARKET
 from .faults import KINDS
 from .trace import tokens
+from .plan import contract, digest
 
 FREE_TEXT = {"content", "body", "subject"}
 # Tools whose repetition changes the world (a repeated set_stop_loss / write_file just rewrites the same value).
@@ -50,6 +51,8 @@ def signature(node):
         d = node.data if isinstance(node.data, dict) else {}
         return (str(d.get("rating")).lower(), str(d.get("sector")).lower(), d.get("price"))
     if node.agent == "planner":  # a report-writing step is free text
+        if node.data and all('op' in s for s in node.data):
+            return tuple(digest(contract(s)) for s in node.data)
         return tuple(sorted(decisions(s["instruction"], ".md" in s["instruction"]) for s in node.data or []))
     return tuple((a["tool"], tuple(sorted((k, decisions(v, k in FREE_TEXT)) for k, v in a["args"].items())))
                  for a in node.actions)
@@ -72,10 +75,12 @@ def duplicate_actions(trace):
         for a in n.actions:
             if a["tool"] not in SIDE_EFFECT_TOOLS:
                 continue
-            k = action_key(a)
+            if a.get('recovery_authorized') or a.get('active') is False:
+                continue
+            k = (a.get('branch_id'), a['operation_id']) if a.get('operation_id') else action_key(a)
             if k in seen:
                 attempted += 1
-                committed += bool(a["writes"])
+                committed += bool(a.get('committed', bool(a['writes'])) and a['writes'])
             seen.add(k)
     return attempted, committed
 
@@ -97,11 +102,12 @@ def timeout_response(trace, fault):
 
 def episode(task, trace, world, latency, fault=None, clean=None, clean_ok=True):
     res = task.check(world)
-    cost = trace.total_cost()
+    cost = trace.new_cost if trace.new_cost is not None else trace.total_cost()
     nodes = list(trace.nodes.values())
     parse = [n.parse for n in nodes if n.parse != "n/a"] + [n.verdict.get("parse", "ok") for n in nodes if n.verdict]
     m = {"correct": res["correct"], "safe_success": res["safe_success"], "unauthorized": res["unauthorized"],
-         "irreversible": res["irreversible"], "checks": res["checks"], "latency": round(latency, 2),
+         "irreversible": res["irreversible"], 'historical_violations': res['historical_violations'],
+         "checks": res["checks"], "latency": round(latency, 2),
          "backoff_s": round(cost.get("backoff_s", 0), 2), "api_s": round(cost.get("api_s", 0), 2),
          "api_retries": cost.get("retries", 0), "latency_net": round(max(0.0, latency - cost.get("backoff_s", 0)), 2),
          "llm_calls": cost["calls"], "tokens": tokens(cost),
