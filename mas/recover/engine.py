@@ -10,6 +10,7 @@ from ..trace import Node, Trace, add_cost, zero_cost, capture_cost, tokens
 from ..workflow import execute_steps
 from .contracts import RecoveryCandidate, RecoveryContext, RecoveryError, RecoveryResult
 from .state import require, target_state, validate_final, restore_prefix, validate_source, valid_prefix
+from .evidence import resolve_outcomes
 
 
 class RecoveryRuntime:
@@ -111,11 +112,12 @@ class RecoveryRuntime:
         validate_final(self.ctx.task, self.world, self.target)
 
 
-def recover(ctx, source, strategy):
+def recover(ctx, source, strategy, status_reader=None):
     from .selective import Restart
 
     start = time.monotonic()
     attempts, cost, errors, audit = [], zero_cost(), [], []
+    queries = resolve_outcomes(ctx.old_trace, source, status_reader)
     result_trace, status, effective = ctx.old_trace, 'stopped', strategy.name
     # Each attempt starts from the same source, never from a failed candidate.
     choices = [strategy] + ([Restart()] if ctx.allow_fallback and strategy.name != 'restart' else [])
@@ -131,6 +133,7 @@ def recover(ctx, source, strategy):
                 validate_source(ctx, source)
                 candidate = selected.build(ctx, runtime)
                 runtime.validate()
+                runtime.trace.final_state = runtime.world.snapshot()
             except RecoveryError as e:
                 failure = e
             except Exception as e:
@@ -146,6 +149,8 @@ def recover(ctx, source, strategy):
             continue
         source.state = copy.deepcopy(runtime.world.state)
         source.log = copy.deepcopy(runtime.world.log)
+        source.audit_log = copy.deepcopy(runtime.world.audit_log)
+        source._order_outcomes = copy.deepcopy(runtime.world._order_outcomes)
         source.tool_hook = None
         result_trace = candidate.trace
         status = 'reconstructed' if len(attempts) == 1 else 'fallback_reconstructed'
@@ -165,5 +170,6 @@ def recover(ctx, source, strategy):
              'compensations': sum(d['decision'] == 'compensated' for d in decisions),
              'unrecoverable': len(source.state['external']), 'decisions': decisions,
              'invalidated': sorted(runtime.invalid),
+             'recovery_status_queries': queries,
              'recovery_audit': audit, 'source_trace_id': ctx.old_trace.run_id}
     return RecoveryResult(result_trace, stats)

@@ -76,6 +76,8 @@ class Trace:
         self.source_trace_id = None
         self.context_hash = None
         self.checkpoints = {}
+        # Terminal observation is independent of executor-prefix checkpoints.
+        self.final_state = None
         self.new_cost = None  # actual new work, excluding historical costs on reused nodes
 
     def add(self, node):
@@ -120,14 +122,14 @@ class Trace:
 
     def to_dict(self):
         return {"task_id": self.task_id, "nodes": [asdict(n) for n in self.nodes.values()],
-                "edges": sorted(self.edges()), 'schema_version': 3, 'run_id': self.run_id,
+                "edges": sorted(self.edges()), 'schema_version': 4, 'run_id': self.run_id,
                 'source_trace_id': self.source_trace_id, 'context_hash': self.context_hash,
-                'checkpoints': self.checkpoints, 'new_cost': self.new_cost}
+                'checkpoints': self.checkpoints, 'final_state': self.final_state, 'new_cost': self.new_cost}
 
     @classmethod
     def from_dict(cls, data):
         trace = cls(data['task_id'])
-        for key in ('run_id', 'source_trace_id', 'context_hash', 'checkpoints', 'new_cost'):
+        for key in ('run_id', 'source_trace_id', 'context_hash', 'checkpoints', 'final_state', 'new_cost'):
             if key in data:
                 setattr(trace, key, copy.deepcopy(data[key]))
         for n in data['nodes']:

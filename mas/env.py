@@ -45,13 +45,28 @@ class World:
                       "files": {}, "external": [], "violations": []}
         self.initial = copy.deepcopy(self.state)
         self.log = []          # every executed tool call
+        self.audit_log = []    # evaluator-only ground truth, never passed to recovery
         self.tool_hook = None  # set by the fault injector; may rewrite a call's result
         self.operation_id = None
         self.branch_id = uuid.uuid4().hex
         self.recovery_mode = False
         self._permit = None  # single-use exact compensation authorization, never a tool argument
+        # Simulated service-owned status, not part of a recovery World/trace.
+        self._order_outcomes = {}
+        self._unavailable_orders = set()
+
+    def query_order_status(self, request_id):
+        """Read-only simulated service query: True / False / None (still unknown).
+
+        A fresh request ID identifies each submission; this is not an idempotency
+        key. The API deliberately does not return hidden state snapshots.
+        """
+        if request_id in self._unavailable_orders:
+            return None
+        return self._order_outcomes.get(request_id)
 
     def call(self, name, args, by):
+        request_id = uuid.uuid4().hex  # known before submission, including a lost response
         spec = TOOLS[name]
         before = self.snapshot()
         permitted = self._permit == (name, args)
@@ -61,6 +76,9 @@ class World:
         try:
             if blocked:
                 raise ValueError('operation is not authorized during recovery')
+            before_call = getattr(self.tool_hook, 'before_call', None)
+            if before_call and before_call(name, by):
+                raise ValueError('request was not submitted')
             result, reads, writes = spec["fn"](self, **args)
         except Exception as e:  # bad arguments from the LLM, unknown ticker, ...
             result, reads, writes = f"ERROR: {e}", [], []
@@ -70,19 +88,23 @@ class World:
             if before[key] != after[key] and not any(w == key or w.startswith(key + '.') for w in writes):
                 writes.append(key + '.*' if isinstance(before[key], dict) else key)
         success = not result.startswith(('ERROR:', 'Order rejected:', 'KYC failed:'))
-        rec = {"id": uuid.uuid4().hex, "tool": name, "args": copy.deepcopy(args), "by": by, "result": result,
+        rec = {"id": request_id, "tool": name, "args": copy.deepcopy(args), "by": by, "result": result,
                "reads": reads, "writes": writes, "irreversible": spec["irreversible"],
                "before": before, "after": after,
                "committed": success if success or before == after else None,
                "operation_id": self.operation_id, "branch_id": self.branch_id, "active": True,
                "recovery_authorized": bool(permitted and not blocked),
                "phase": 'recovery' if self.recovery_mode else 'initial'}
+        self._order_outcomes[rec['id']] = rec['committed']
         if self.tool_hook:
             self.tool_hook(rec)
+        if rec.pop('_query_unavailable', False):
+            self._unavailable_orders.add(rec['id'])
         if rec["result"] != result:  # a tool fault rewrote what the agent sees: keep both sides as evidence
             rec["raw_result"] = result               # what the tool really returned
             rec["state_changed"] = bool(writes)      # did the call commit a state change anyway?
         self.log.append(rec)
+        self.audit_log.append(copy.deepcopy(rec))
         return rec
 
     def snapshot(self):

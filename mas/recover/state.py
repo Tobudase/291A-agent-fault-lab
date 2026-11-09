@@ -21,15 +21,19 @@ def validate_source(ctx, world):
     old = ctx.old_trace
     if not old.context_hash:  # legacy traces may use the explicit restart fallback
         return
-    require(bool(old.checkpoints), 'TRACE_INCOMPLETE', False)
-    end = old.checkpoints[max(old.checkpoints, key=int)]
+    end = old.final_state
+    if end is None and old.checkpoints:  # compatibility with v3 executor traces
+        end = old.checkpoints[max(old.checkpoints, key=int)]
+    require(end is not None, 'TRACE_INCOMPLETE', False)
     require(end == world.state, 'STATE_CONFLICT', False)
     receipts = {a['id']: a for a in world.log}
     require(len(receipts) == len(world.log), 'DUPLICATE_ACTION_ID', False)
     for node in old.nodes.values():
         for action in node.actions:
             require(receipts.get(action['id']) == action, 'TRACE_INCOMPLETE', False)
-            require('committed' in action and 'before' in action and 'after' in action, 'TRACE_INCOMPLETE', False)
+            require('committed' in action, 'TRACE_INCOMPLETE', False)
+            require((action.get('before') is not None and action.get('after') is not None)
+                    or action.get('evidence') == 'response_only', 'TRACE_INCOMPLETE', False)
     require(all(a.get('committed') is not None for a in world.log), 'EFFECT_UNKNOWN', False)
 
 

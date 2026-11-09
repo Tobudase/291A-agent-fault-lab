@@ -28,6 +28,7 @@ class SavedWorld:
 
     def __init__(self, d):
         self.state, self.log = d["state"], d["log"]
+        self.audit_log = d.get('audit_log', self.log)
 
 
 def load_episode(exp, row):

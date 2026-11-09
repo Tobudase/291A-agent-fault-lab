@@ -1,8 +1,7 @@
 """Public strategy registry and compatibility adapters for the experiment harness."""
-import copy
-
 from .recover.contracts import RecoveryContext
 from .recover.engine import recover
+from .recover.evidence import recovery_inputs
 from .recover.selective import Restart, Selective
 from .recover.change_aware import ChangeAware
 from .recover.reconcile import Reconcile
@@ -17,21 +16,13 @@ def register(strategy):
     STRATEGIES[strategy.name] = strategy
 
     def run(task, world, trace, fault):
-        old = copy.deepcopy(trace)
-        # The diagnostic identifies the failed node, not its corrected answer.
-        for node in old.nodes.values():
-            node.original = None
-            for a in node.actions:
-                a.pop('raw_result', None)
-                a.pop('state_changed', None)
-        # Preserve receipt equality without exposing injection-only oracle fields.
-        source = copy.deepcopy(world)
-        for a in source.log:
-            a.pop('raw_result', None)
-            a.pop('state_changed', None)
-        result = recover(RecoveryContext(task, old, fault.target), source, strategy)
+        old, source = recovery_inputs(trace, world)
+        result = recover(RecoveryContext(task, old, fault.target), source, strategy,
+                         status_reader=world.query_order_status)
         if result.stats['recovery_status'] != 'stopped':
             world.state, world.log = source.state, source.log
+            world.audit_log.extend(source.audit_log)
+            world._order_outcomes.update(source._order_outcomes)
         return result.trace, result.stats
 
     METHODS[strategy.name] = run

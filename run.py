@@ -27,12 +27,13 @@ from mas.trace import Node, Trace
 from mas.workflow import run_workflow
 
 
-HARNESS = "v3-recovery"
+HARNESS = "v4-recovery-evidence"
 
 
 def experiment_config():
     return {'signature': config_signature(), 'cash_mode': tasks_mod.CASH_MODE,
             'harness': HARNESS, 'recovery_fallbacks': 1,
+            'timeout_outcome': faults_mod.TIMEOUT_OUTCOME,
             'fault_timeout_s': faults_mod.TIMEOUT_S, 'api_timeout_s': llm.TIMEOUT, 'api_retries': llm.RETRIES}
 
 
@@ -40,7 +41,8 @@ def save(out, task, fault_name, method, trace, world, metrics):
     d = os.path.join(out, task.id, fault_name, method)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "trace.json"), "w") as f:
-        json.dump({"metrics": metrics, "trace": trace.to_dict(), "state": world.state, "log": world.log}, f, indent=1)
+        json.dump({"metrics": metrics, "trace": trace.to_dict(), "state": world.state, "log": world.log,
+                   'audit_log': world.audit_log}, f, indent=1)
 
 
 def timed(fn, *a, **kw):
@@ -138,12 +140,15 @@ def main():
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel episodes (default 1: parallel episodes on a shared API cause rate-limit waits)")
     ap.add_argument("--resume", action="store_true", help="skip episodes already saved under --out")
+    ap.add_argument('--timeout-outcome', choices=['committed', 'not_committed', 'unknown'],
+                    default='committed', help='E-timeout submission/status-query scenario (simulated service)')
     ap.add_argument("--extra-faults", action="store_true", help="add R-distractor (wrong rating on a ticker the task ignores)")
     ap.add_argument("--cash", choices=["legacy", "ample"], default=tasks_mod.CASH_MODE,
                     help="starting cash: legacy = budget+5000 (Phase 1 runs); ample = 2x budget, so a duplicate buy "
                          "always fits (controlled E-timeout). Do not mix modes in one --out folder.")
     a = ap.parse_args()
     tasks_mod.CASH_MODE = a.cash
+    faults_mod.TIMEOUT_OUTCOME = a.timeout_outcome
     tasks = TASKS if a.tasks == "all" else [TASKS_BY_ID[t] for t in a.tasks.split(",")]
     faults = None if a.faults == "all" else set(a.faults.split(","))
     extra = a.extra_faults or bool(faults and "R-distractor" in faults)  # naming the control is enough

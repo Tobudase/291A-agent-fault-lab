@@ -53,6 +53,7 @@ def run_workflow(task, world, fault=None, verify=False, reuse=None):
         reports = research_all(task, world, trace, produce)
         plan = build_plan(task, reports, produce)
         execute_steps(task, world, trace, plan.data or [], produce)
+        trace.final_state = world.snapshot()
     finally:
         world.tool_hook = None
     return trace
