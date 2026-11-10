@@ -57,9 +57,13 @@ spec:
           args:
             - >-
               apt-get update -qq && apt-get install -y -qq git >/dev/null &&
-              git clone --branch phase_2 --single-branch
-              https://github.com/ZKadelzq/291A-agent-fault-lab.git
-              /work/291A-agent-fault-lab-4b &&
+              if [ -d /work/291A-agent-fault-lab-4b/.git ]; then
+                git -C /work/291A-agent-fault-lab-4b fetch origin phase_2 &&
+                git -C /work/291A-agent-fault-lab-4b reset --hard origin/phase_2 &&
+                git -C /work/291A-agent-fault-lab-4b clean -fd;
+              else
+                git clone --branch phase_2 --single-branch https://github.com/ZKadelzq/291A-agent-fault-lab.git /work/291A-agent-fault-lab-4b;
+              fi &&
               cd /work/291A-agent-fault-lab-4b &&
               git apply /config/phase2.patch &&
               python -m pip install -q -r requirements-dev.txt &&
