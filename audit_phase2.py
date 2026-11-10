@@ -30,7 +30,7 @@ def read_run(path, scenario):
     expected_faults = FAULTS if scenario == 'committed' else ('E-timeout',)
     if (selection != {'tasks': list(TASKS), 'faults': sorted(expected_faults),
                       'methods': sorted(METHODS)}
-            or manifest.get('timeout_outcome') != scenario
+            or manifest.get('timeout_outcome') != scenario.replace('-', '_')
             or manifest.get('cash_mode') != 'ample'):
         raise ValueError(f'{root}: unexpected experiment scope or configuration')
     expected = {(t, 'clean', m) for t in TASKS for m in ('none', 'verify')}
