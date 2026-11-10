@@ -164,14 +164,13 @@ Verify rows add `detected` (the faulty node got a FAIL verdict and was regenerat
 
 ## Phase 2: recovery experiments
 
-Shared real-model runs (full matrix commands are below):
+Completed real-model runs; see the [consolidated analysis](runs/phase2-muse-glimmer-30b/analysis.md) for all 396 episodes. Full matrix commands are below:
 
 | Directory | Scope | Episodes |
 |---|---|---|
 | [phase2-muse-glimmer-30b](runs/phase2-muse-glimmer-30b/analysis.md) | Main matrix: T1–T6, 8 faults, E-timeout committed | 300 |
-| [phase2-smoke-muse-glimmer-30b](runs/phase2-smoke-muse-glimmer-30b/summary.md) | R-incorrect, E-timeout committed, P-malicious | 20 |
-| [phase2-etimeout-not-committed-smoke-muse-glimmer-30b](runs/phase2-etimeout-not-committed-smoke-muse-glimmer-30b/summary.md) | E-timeout not submitted | 8 |
-| [phase2-etimeout-unknown-smoke-muse-glimmer-30b](runs/phase2-etimeout-unknown-smoke-muse-glimmer-30b/summary.md) | E-timeout status unavailable | 8 |
+| [phase2-etimeout-not-committed-muse-glimmer-30b](runs/phase2-etimeout-not-committed-muse-glimmer-30b/summary.md) | T1–T6, E-timeout not submitted | 48 |
+| [phase2-etimeout-unknown-muse-glimmer-30b](runs/phase2-etimeout-unknown-muse-glimmer-30b/summary.md) | T1–T6, E-timeout status unavailable | 48 |
 
 Phase 2 compares six methods on the same Researcher → Planner → Executor tasks:
 
