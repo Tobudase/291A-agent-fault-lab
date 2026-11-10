@@ -71,3 +71,43 @@ def test_timeout_query_and_truth_survive_save_and_rescore(tmp_path, mode):
     if mode == 'not_committed':
         assert baseline['safe_success'] and not baseline['timeout_committed']
         assert baseline['dup_committed'] == 0 and baseline['outcome'] == 'absorbed'
+
+
+def test_output_requires_explicit_matching_resume(tmp_path):
+    from run import prepare_output
+    root = tmp_path / 'experiment'
+    config = {'model': 'test', 'temperature': 0}
+    scope = {'tasks': ['T1'], 'faults': ['E-timeout'], 'methods': ['none']}
+    prepare_output(root, config, scope)
+    evidence = root / 'evidence.txt'
+    evidence.write_text('keep')
+    with pytest.raises(ValueError, match='not empty'):
+        prepare_output(root, config, scope)
+    with pytest.raises(ValueError, match='configuration changed'):
+        prepare_output(root, {**config, 'temperature': 1}, scope, resume=True)
+    with pytest.raises(ValueError, match='tasks/faults/methods changed'):
+        prepare_output(root, config, {**scope, 'tasks': ['T2']}, resume=True)
+    prepare_output(root, config, scope, resume=True)
+    assert evidence.read_text() == 'keep'
+    with pytest.raises(ValueError, match='requires manifest'):
+        prepare_output(tmp_path / 'missing', config, scope, resume=True)
+
+
+def test_partial_fault_resume_reruns_the_paired_group(tmp_path, monkeypatch):
+    import run
+    task = TASKS[0]
+    methods = {'none', 'restart', 'selective'}
+    clean, ok, _ = run_clean(task, methods, str(tmp_path))
+    fault = next(f for f in schedule(task) if f.name == 'R-incorrect')
+    run_fault(task, fault, clean, ok, methods, str(tmp_path))
+    saved = tmp_path / 'T1/R-incorrect/none/trace.json'
+    old_id = json.loads(saved.read_text())['trace']['run_id']
+    (tmp_path / 'T1/R-incorrect/selective/trace.json').unlink()
+    rows = run_fault(task, fault, clean, ok, methods, str(tmp_path), resume=True)
+    new_id = json.loads(saved.read_text())['trace']['run_id']
+    assert new_id != old_id
+    assert all(r['source_trace_id'] == new_id for r in rows if r['method'] != 'none')
+    def no_work(*args, **kwargs):
+        raise AssertionError('complete group should be reused')
+    monkeypatch.setattr(run, 'run_workflow', no_work)
+    assert run_fault(task, fault, clean, ok, methods, str(tmp_path), resume=True) == rows

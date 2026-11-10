@@ -162,79 +162,178 @@ Verify rows add `detected` (the faulty node got a FAIL verdict and was regenerat
   the plan is checked against the task. The node is regenerated once on FAIL (or ERROR). The extra cost appears in
   `verify_tokens`. Scope: it does **not** check executor actions or their side effects, so it cannot detect E-timeout.
 
-## Phase 2: recovery strategies
+## Phase 2: recovery experiments
 
-[mas/recovery.py](mas/recovery.py) registers `restart`, `selective`, `change_aware`, and `reconcile`.
-Strategies implement `name` and `build(ctx, runtime)`, then register with `register(MyStrategy())`.
-They share the [runtime](mas/recover/engine.py), [state checks](mas/recover/state.py),
-and [evidence boundary](mas/recover/evidence.py); the registry also supplies CLI and analysis method lists.
+Phase 2 compares six methods on the same Researcher → Planner → Executor tasks:
 
-- `selective`: retain independent research and a verified pre-fault execution prefix; restore a checkpoint and rerun the suffix.
-- `change_aware`: repair research/plan, compare structured operations, and retain the longest verified common execution prefix.
-- `reconcile`: derive a target from the repaired plan, then sell excess shares, buy missing shares, repair stops and report actual holdings.
-- Recovery never reads `Task.expected()` or the clean reference. Evaluation stays independent.
-- External history survives rollback. Recovery sees redacted timeout receipts and queries a simulated order-status service; still-unknown outcomes and unlogged state changes stop every strategy.
-- Reconcile assumes no unrecorded account drift. Successful traces save terminal state evidence independently of executor checkpoints, allowing a subsequent recovery.
-- Request retries and distinct business-duplicate requests are separate metrics; neither implements server-side idempotency.
-- Execution checks allow an extra account read or repeat KYC check only when trusted receipts prove no state change; repeat KYC must concern the already-verified task client. Extra trades and verification of another client still invalidate reuse.
+| Method | What it does |
+|---|---|
+| `none` | Executes the faulty workflow without recovery; the reference for measuring fault propagation. |
+| `verify` | Checks each research report and plan before execution; does not verify executor side effects. |
+| `restart` | Restores the initial simulated account and recomputes the workflow. |
+| `selective` | Keeps independent research and a verified execution prefix, then reruns the affected suffix. |
+| `change_aware` | Repairs research/plan, compares old and new operations, and reuses the longest verified common execution prefix. |
+| `reconcile` | Derives the target account from the repaired plan, then adjusts positions, stop-loss settings and report to match it. |
+
+The four recovery strategies receive the fault location and start from copies of the **same faulty run**.
+`verify` is a separate preventive run. Every experiment also runs clean controls (`none`, plus `verify` if selected).
+An episode is one task/fault/method result; recovery cost includes the faulty run plus new recovery work.
+
+### Setup
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest -q
-# Full offline mechanism check (deterministic model double; no API calls)
-python tests/offline_smoke.py --extra-faults --cash ample --methods none,restart,verify,selective,change_aware,reconcile --out runs/scratch/phase2-offline
-# Live smoke: run.py loads .env; exported environment variables take precedence
-export LLM_TIMEOUT=90 LLM_RETRIES=2
-python run.py --tasks T1 --faults R-incorrect,E-timeout,P-malicious --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke
-# Separate service outcomes (8 episodes each; main smoke above has 20)
-python run.py --tasks T1 --faults E-timeout --timeout-outcome not_committed --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke-not-committed
-python run.py --tasks T1 --faults E-timeout --timeout-outcome unknown --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke-unknown
-# Repeat analysis for each output folder
-python rescore.py runs/scratch/phase2-smoke
-python summarize.py runs/scratch/phase2-smoke
-python figures.py runs/scratch/phase2-smoke
+cp .env.example .env
+# Edit .env to set your API key and, optionally, model/endpoint.
 ```
 
-For separate timeout experiments, use `--faults E-timeout --timeout-outcome committed`,
-`not_committed`, or `unknown`, with a different output folder for each. The last case commits in the
-simulated service but leaves its status query unavailable: all recovery strategies stop without further
-state changes. A query that confirms non-submission permits recovery. There is no real trading-service
-adapter, server-side idempotency key, or online prevention of the initial blind retry.
+`run.py` automatically loads `.env`; already-exported variables take precedence. Do not overwrite an existing
+`.env`. The model/endpoint settings are listed under **Model endpoint** above. `LLM_TIMEOUT` defaults to
+600 seconds per API request; `LLM_RETRIES` defaults to 6 total attempts per request. Neither is an experiment
+size setting. Use the same settings when resuming. Offline tests below do not need an API key.
 
-Validation: **111 deterministic tests pass**, including real-executor-style repeated KYC checks and rejection of new or other-client verification. The offline matrix covers 300 episodes plus 48 each for
-non-submission and unavailable status queries. All 24 recovery episodes in the unavailable-query case stop;
-historical email exfiltration remains unsafe after account repair. These validate simulated mechanisms,
-not real-model success rates.
+### Full live-model experiment
 
-**Live-model smoke (T1, Muse Glimmer 30B, ample cash).** The API is available again. This focused
-check covers 36 episodes: 20 for R-incorrect / E-timeout committed / P-malicious, and 8 each for
-not-committed and unknown timeout outcomes, including clean none/verify controls in each folder.
-The four recovery strategies start from the same faulty run within each scenario; verify runs separately.
+Run these **three commands** for the complete Phase 2 matrix (396 episodes). All use the configured real
+model, all six tasks and all six methods. Run them sequentially; each has its own output directory.
 
-| scenario | four recovery strategies | interpretation |
+```bash
+# 300 episodes: 6 tasks × 8 faults × 6 methods + 12 clean controls.
+# Includes the R-distractor control; E-timeout commits but its response is lost.
+python run.py --extra-faults --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-full/committed
+
+# 48 episodes: only E-timeout, with the first order never submitted.
+python run.py --faults E-timeout --timeout-outcome not_committed --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-full/not-committed
+
+# 48 episodes: only E-timeout, committed but status query remains unavailable.
+python run.py --faults E-timeout --timeout-outcome unknown --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-full/unknown
+```
+
+These commands default to one worker. Add `--workers 2` (or more) to run task/fault groups concurrently;
+higher concurrency can increase API rate-limit waits. `--cash ample` ensures sufficient funds for a duplicate
+buy to commit, so insufficient cash does not hide the fault.
+
+### Small live-model trial (optional)
+
+Use this before a full run to check your API configuration and inspect one recovery case.
+It runs **8 episodes**, not the full matrix: T1 × R-incorrect × six methods, plus two clean controls.
+
+```bash
+python run.py --tasks T1 --faults R-incorrect --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-trial
+```
+
+### Local tests (no API calls)
+
+```bash
+# Unit and regression tests.
+python -m pytest -q
+
+# Optional: exercise the experiment pipeline with deterministic model replies.
+python tests/offline_smoke.py --extra-faults --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-offline/committed
+```
+
+`tests/offline_smoke.py` accepts the same options as `run.py`. To check the two other timeout outcomes offline,
+use the corresponding full-experiment commands above with `python tests/offline_smoke.py` in place of
+`python run.py` and separate `phase2-offline/not-committed` and `phase2-offline/unknown` output directories.
+Its synthetic token counts and local timings are not model-performance measurements.
+
+### Command-line options
+
+All options are optional syntactically. **The default methods are only `none,restart,verify`**;
+include `--methods` as shown above to compare all Phase 2 strategies. Use `python run.py --help` for CLI help.
+
+| Option | Default when omitted | Effect when supplied |
 |---|---|---|
-| R-incorrect | 4/4 reconstructed; correct and safe | repaired the wrong rating and downstream allocation |
-| E-timeout: committed | 4/4 reconstructed; correct and safe | queried submission status, then repaired the duplicate purchase |
-| E-timeout: not_committed | 4/4 reconstructed; correct and safe | queried non-submission; the original executor retry had already achieved the target |
-| E-timeout: unknown | 4/4 stopped with `EFFECT_UNKNOWN` | no new model calls, compensation actions or account changes; original faulty state remains |
-| P-malicious | 4/4 reconstructed; correct but unsafe | historical simulated email leakage survives account repair |
+| `--tasks` | `all` (T1–T6) | Comma-separated task IDs, e.g. `T1,T3`, restrict the tasks. |
+| `--faults` | `all` (7 standard faults) | Comma-separated names, e.g. `R-incorrect,E-timeout`, restrict faults. See the fault table above. |
+| `--extra-faults` | Off | Adds `R-distractor` to the available fault set. With an explicit `--faults` list, that list still filters the set. Naming `R-distractor` directly also enables it. |
+| `--methods` | `none,restart,verify` | Comma-separated methods from the table above. `none` always runs because recovery needs its faulty trace, even if omitted from this list. |
+| `--cash` | `TASK_CASH` from environment, otherwise `legacy` | `legacy`: budget + $5,000; `ample`: twice the budget. Use `ample` for the duplicate-buy experiment. |
+| `--timeout-outcome` | `committed` | Controls E-timeout only: `committed` = committed/query confirms; `not_committed` = not submitted/query confirms; `unknown` = committed/query unavailable. Does not inject E-timeout unless that fault is selected. |
+| `--workers` | `1` | Number of concurrent task/fault groups. Does not change experiment scope; may be changed on resume. |
+| `--out` | Fresh timestamped directory in `runs/scratch/` | Explicit result directory. A new run requires a new or empty directory. |
+| `--resume` | Off | Continue the existing `--out` with matching configuration and task/fault/method selection. Never combine with a new experiment's directory. |
 
-The verify baseline corrected R-incorrect and blocked P-malicious in this smoke, but failed both
-committed/unknown E-timeout cases; it does not inspect executor side effects. All six clean controls
-were correct and safe. All 36 saved results were rescored without changes; summaries and figures generated successfully.
-Local artifacts are under `runs/scratch/phase2-live-v4-{committed,not-committed,unknown}/` (git-ignored).
-Only the selected episodes in each `results.jsonl` belong to this smoke; extra traces from the interrupted
-full-grid attempt are excluded.
+### New runs versus resume
 
-This is a single-task smoke, **not a completed full live matrix or a statistical strategy ranking**.
-The model calls are real; accounts, trades, status queries and email effects remain simulated.
-Service throttling and an interrupted connection occurred during validation; incomplete fault groups
-were rerun as paired groups. Do not use these observations as a throughput benchmark.
+For a **new experiment**, omit `--resume`. Reuse the commands above with a new `--out` name, or omit `--out`
+to get a fresh directory automatically. A non-empty directory is rejected rather than silently overwritten.
+Directory names such as `final` have **no special meaning** and are not used to decide completeness.
 
-New runs use `v4-recovery-evidence` and a configuration manifest. Use a new output
-folder after changing code/configuration; old Phase 1 results remain readable but are not a
-paired comparison with the new protocol. `Node.uses` and `metrics.signature` are analysis aids,
-not evidence permitting executor reuse. End-to-end recovery cost includes the failed run plus
-all newly incurred recovery work, including fallback attempts.
+For an **interrupted experiment**, repeat its original command with the same explicit `--out` and add
+`--resume` (two hyphens). For example, to continue the 300-episode main matrix:
 
-To add a task, append to `TASKS` in `tasks.py`. To add a fault, extend `KINDS`, `schedule()` and `tool_hook`/`mutate` in `faults.py`.
+```bash
+python run.py --extra-faults --cash ample \
+  --methods none,restart,verify,selective,change_aware,reconcile \
+  --out runs/scratch/phase2-full/committed --resume
+```
+
+Resume checks model/endpoint settings, model parameters, source fingerprint, cash mode, timeout scenario,
+API timeout/retry settings, and selected tasks/faults/methods against the saved metadata. Changing those
+requires a new directory. Credentials are not stored in the metadata; replacing an API key is allowed.
+
+Completed task/fault groups are reused. If only some methods in a group finished, that **whole group**
+is rerun so all recovery strategies still share one faulty baseline. This is not continuation halfway through
+an agent call. A saved `stopped` recovery result is a completed result, not an interrupted job. Older folders
+without `selection.json` remain readable for analysis but cannot be resumed by this CLI.
+Resume removes derived summaries, plots and rescore backups to prevent stale analysis; regenerate them after completion.
+
+### Read the results
+
+For each completed output directory, generate the human-readable summary and figures:
+
+```bash
+python summarize.py runs/scratch/phase2-full/committed
+python figures.py runs/scratch/phase2-full/committed
+```
+
+Repeat with `not-committed` and `unknown`. Start with **`summary.md`**, then inspect individual traces only
+when investigating a result. `rescore.py` is optional: use it to recompute metrics after checker changes,
+not as a required step after every run.
+Local retained experiments, when present, are indexed in `runs/scratch/README.md`; scratch contents are not committed.
+
+| File inside an experiment directory | Purpose |
+|---|---|
+| `summary.md` | Outcome, safety and cost tables grouped by fault and method. |
+| `figs/` | Generated plots. |
+| `results.jsonl` | One result row per selected episode; input to summary/plot tools. |
+| `<task>/<fault>/<method>/trace.json` | Detailed messages, tools, account state, recovery decisions and per-episode metrics. |
+| `manifest.json` | Configuration fingerprint used to validate resume. |
+| `selection.json` | Exact task/fault/method selection used to validate resume. |
+| `failures.log` | Present when a job failed (e.g. an API error); rerun the original command with `--resume`. |
+| `results.before_rescore.jsonl` | Created only by `rescore.py`, preserving the original scoring input. |
+
+The process must finish successfully and produce the expected row count (300 / 48 / 48 for the full commands)
+before a run is treated as complete. A hard interruption can leave traces without a complete `results.jsonl`;
+keep such a directory only if you intend to resume it. Exit success means the experiment finished, **not** that
+all faulted agents succeeded.
+
+`correct` measures the final account/report; `safe_success` additionally rejects unauthorized actions and
+historical KYC violations. `recovery_status` distinguishes `reconstructed`, `fallback_reconstructed`, and
+`stopped`; check `reason` for a stop. A repaired account can still be unsafe after irreversible email leakage.
+An unknown submission result stops recovery without claiming the faulty account was repaired.
+
+### Implementation and scope
+
+Strategies implement `name` and `build(ctx, runtime)` and register in [mas/recovery.py](mas/recovery.py).
+The shared [runtime](mas/recover/engine.py), [state checks](mas/recover/state.py), and
+[evidence adapter](mas/recover/evidence.py) handle execution, validation, fallback and cost accounting.
+Recovery does not read the evaluation answer or clean reference.
+
+The account, trades, order-status service and external effects are simulated. Checkpoint rollback is a
+simulator capability; there is no real trading adapter or server-side idempotency. All strategies reject
+unrecorded account drift, including `reconcile`. Irreversible history survives recovery. Unknown order
+outcomes stop all strategies. The separate retry/duplicate metrics measure behavior, not prevention.
+
+To add a task, extend `TASKS` in `mas/tasks.py`. To add a fault, extend `mas/faults.py`.

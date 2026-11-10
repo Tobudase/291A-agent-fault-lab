@@ -8,7 +8,9 @@ import argparse
 import copy
 import json
 import os
+import shutil
 import time
+import uuid
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -131,12 +133,31 @@ def run_fault(task, fault, clean, clean_ok, methods, out, resume=False):
     return rows
 
 
+def prepare_output(out, config, selection, resume=False):
+    """New runs never overwrite; resumes must retain configuration and scope."""
+    root = Path(out)
+    manifest, scope = root / 'manifest.json', root / 'selection.json'
+    if resume:
+        if not manifest.exists() or not scope.exists():
+            raise ValueError('resume requires manifest.json and selection.json from an existing run')
+        if json.loads(manifest.read_text()) != config:
+            raise ValueError('configuration changed; use a new --out directory without --resume')
+        if json.loads(scope.read_text()) != selection:
+            raise ValueError('tasks/faults/methods changed; use a new --out directory without --resume')
+    elif root.exists() and any(root.iterdir()):
+        raise ValueError('output directory is not empty; use --resume or a new --out directory')
+    root.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(config, indent=2) + '\n')
+    scope.write_text(json.dumps(selection, indent=2) + '\n')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default="all", help="comma-separated task ids or 'all'")
     ap.add_argument("--faults", default="all", help="comma-separated fault names or 'all'")
     ap.add_argument("--methods", default="none,restart,verify", help=','.join(['none', 'verify', *METHODS]))
-    ap.add_argument("--out", default=f"runs/{time.strftime('%m%d-%H%M')}")
+    ap.add_argument("--out", default=f"runs/scratch/{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}",
+                    help='output directory; defaults to a fresh timestamped folder in runs/scratch')
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel episodes (default 1: parallel episodes on a shared API cause rate-limit waits)")
     ap.add_argument("--resume", action="store_true", help="skip episodes already saved under --out")
@@ -156,12 +177,20 @@ def main():
     unknown = methods - {'none', 'verify', *METHODS}
     if unknown:
         ap.error('unknown methods: ' + ','.join(sorted(unknown)))
-    os.makedirs(a.out, exist_ok=True)
-    manifest = Path(a.out) / 'manifest.json'
     config = experiment_config()
-    if manifest.exists() and json.loads(manifest.read_text()) != config:
-        ap.error('output directory has a different configuration; use a new --out directory')
-    manifest.write_text(json.dumps(config, indent=2) + '\n')
+    selection = {'tasks': sorted(t.id for t in tasks),
+                 'faults': sorted({f.name for t in tasks for f in schedule(t, extra)
+                                   if faults is None or f.name in faults}),
+                 'methods': sorted(methods | {'none'})}
+    try:
+        prepare_output(a.out, config, selection, a.resume)
+    except ValueError as e:
+        ap.error(str(e))
+    # These derive from the previous results, which a resumed group may replace.
+    for name in ('summary.md', 'results.before_rescore.jsonl', 'results.v1.jsonl'):
+        (Path(a.out) / name).unlink(missing_ok=True)
+    if (Path(a.out) / 'figs').exists():
+        shutil.rmtree(Path(a.out) / 'figs')
     stale = os.path.join(a.out, "failures.log")
     if os.path.exists(stale):  # from an earlier attempt; rewritten below if this run has failures
         os.remove(stale)
