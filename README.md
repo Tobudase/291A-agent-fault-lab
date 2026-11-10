@@ -174,6 +174,10 @@ Completed real-model runs; see the [consolidated analysis](runs/phase2-muse-glim
 
 The [complete-matrix audit](runs/PHASE2_AUDIT.md) independently checks every result row against its trace and
 confirms that all three runs use the same model and configuration apart from the intended timeout outcome.
+The [provenance and reuse audit](runs/PHASE2_PROVENANCE.md) checks retained-node source integrity, compares
+dependency graphs, and reports offline metadata size and graph-analysis timing. Reproduce it with
+`python analyze_phase2_provenance.py --out runs/PHASE2_PROVENANCE.md`; the timing is a saved-trace
+microbenchmark, not live capture overhead.
 
 Phase 2 compares six methods on the same Researcher → Planner → Executor tasks:
 
