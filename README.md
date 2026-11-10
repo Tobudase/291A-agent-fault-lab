@@ -228,6 +228,43 @@ These commands default to one worker. Add `--workers 2` (or more) to run task/fa
 higher concurrency can increase API rate-limit waits. `--cash ample` ensures sufficient funds for a duplicate
 buy to commit, so insufficient cash does not hide the fault.
 
+After generating all three runs, `audit_phase2.py` checks the exact 300/48/48 episode grids, the manifest in
+every row, and a consistent real model/configuration across runs. It writes a paired cost and safety comparison:
+
+```bash
+python audit_phase2.py \
+  --committed runs/phase2-muse-glimmer-30b \
+  --not-committed runs/phase2-etimeout-not-committed-muse-glimmer-30b \
+  --unknown runs/phase2-etimeout-unknown-muse-glimmer-30b \
+  --out runs/PHASE2_AUDIT.md
+```
+
+#### Nautilus GPU alternative
+
+When the course API is unavailable, `infra/nautilus-phase2.yaml` runs the same 396-episode matrix on one
+dedicated A100 in the authorized `ecepxie` namespace, using the separate open-weight
+[`qwen3:30b-instruct`](https://ollama.com/library/qwen3:30b-instruct) model. It does **not** reproduce the Muse
+Glimmer results. The job first requires all six clean tasks to pass, records the model digest and source commit,
+then runs and audits the three matrices. It uses its own PVC and does not modify other jobs or volumes.
+
+```bash
+git diff origin/phase_2 HEAD > /tmp/cse291-phase2.patch
+kubectl --context nautilus -n ecepxie create configmap cse291-phase2-patch \
+  --from-file=phase2.patch=/tmp/cse291-phase2.patch
+kubectl --context nautilus -n ecepxie apply -f infra/nautilus-phase2.yaml
+kubectl --context nautilus -n ecepxie logs -f job/cse291-phase2-qwen30b -c runner
+```
+
+The ConfigMap carries the tested local commit when the shared GitHub branch cannot be pushed. The job clones
+`phase_2` and applies that patch before running; `source_commit.txt` and `source_patch_sha256.txt` identify the
+exact source. If the shared branch advances, regenerate and validate the patch before submitting a new job.
+
+The runner waits after writing `/work/READY_TO_COPY`, so the result files can be copied from its pod before
+it exits. Copy the three `phase2-qwen3-30b-instruct-*` directories, `PHASE2_AUDIT.md`,
+`model_identity.json`, and `source_commit.txt`; then create `/work/COPIED_TO_LOCAL` in the runner container.
+Only commit the results after checking the audit and summaries. The PVC remains available for an interrupted
+run; delete it only after the copied results are verified.
+
 ### Small live-model trial (optional)
 
 Use this before a full run to check your API configuration and inspect one recovery case.
@@ -267,6 +304,7 @@ include `--methods` as shown above to compare all Phase 2 strategies. Use `pytho
 |---|---|---|
 | `--tasks` | `all` (T1–T6) | Comma-separated task IDs, e.g. `T1,T3`, restrict the tasks. |
 | `--faults` | `all` (7 standard faults) | Comma-separated names, e.g. `R-incorrect,E-timeout`, restrict faults. See the fault table above. |
+| `--clean-only` | Off | Run only clean controls, useful for testing a new model before the full matrix. |
 | `--extra-faults` | Off | Adds `R-distractor` to the available fault set. With an explicit `--faults` list, that list still filters the set. Naming `R-distractor` directly also enables it. |
 | `--methods` | `none,restart,verify` | Comma-separated methods from the table above. `none` always runs because recovery needs its faulty trace, even if omitted from this list. |
 | `--cash` | `TASK_CASH` from environment, otherwise `legacy` | `legacy`: budget + $5,000; `ample`: twice the budget. Use `ample` for the duplicate-buy experiment. |
