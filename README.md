@@ -242,10 +242,13 @@ python audit_phase2.py \
 #### Nautilus GPU alternative
 
 When the course API is unavailable, `infra/nautilus-phase2.yaml` runs the same 396-episode matrix on one
-dedicated A100 in the authorized `ecepxie` namespace, using the separate open-weight
-[`qwen3:30b-instruct`](https://ollama.com/library/qwen3:30b-instruct) model. It does **not** reproduce the Muse
-Glimmer results. The job first requires all six clean tasks to pass, records the model digest and source commit,
-then runs and audits the three matrices. It uses its own PVC and does not modify other jobs or volumes.
+dedicated A100 in the authorized `ecepxie` namespace with the separate open-weight
+[`qwen3:30b-instruct`](https://ollama.com/library/qwen3:30b-instruct) model. If that model is too slow to
+transfer or the task budget requires a smaller model, `infra/nautilus-phase2-4b.yaml` uses
+[`qwen3:4b-instruct`](https://ollama.com/library/qwen3:4b-instruct) on the **same task-owned PVC**. Run one Job
+at a time. These runs do **not** reproduce Muse Glimmer results. Each Job requires all six clean tasks to pass,
+records the model digest and source commit, then runs and audits the three matrices. Neither Job modifies other
+jobs or volumes.
 
 ```bash
 git diff origin/phase_2 HEAD > /tmp/cse291-phase2.patch
@@ -255,13 +258,15 @@ kubectl --context nautilus -n ecepxie apply -f infra/nautilus-phase2.yaml
 kubectl --context nautilus -n ecepxie logs -f job/cse291-phase2-qwen30b -c runner
 ```
 
-The ConfigMap carries the tested local commit when the shared GitHub branch cannot be pushed. The job clones
-`phase_2` and applies that patch before running; `source_commit.txt` and `source_patch_sha256.txt` identify the
+The ConfigMap carries the tested local commit when the shared GitHub branch cannot be pushed. Each Job clones
+`phase_2` and applies that patch before running; `source_commit-<slug>.txt` and
+`source_patch_sha256-<slug>.txt` identify the
 exact source. If the shared branch advances, regenerate and validate the patch before submitting a new job.
 
-The runner waits after writing `/work/READY_TO_COPY`, so the result files can be copied from its pod before
-it exits. Copy the three `phase2-qwen3-30b-instruct-*` directories, `PHASE2_AUDIT.md`,
-`model_identity.json`, and `source_commit.txt`; then create `/work/COPIED_TO_LOCAL` in the runner container.
+The runner waits after writing `/work/READY_TO_COPY-<slug>`, so the result files can be copied from its pod
+before it exits. Copy the three `phase2-<slug>-*` directories, `PHASE2_AUDIT-<slug>.md`,
+`model_identity-<slug>.json`, and `source_commit-<slug>.txt`; then create `/work/COPIED_TO_LOCAL-<slug>` in the
+runner container. The slug is `qwen3-30b-instruct` or `qwen3-4b-instruct`.
 Only commit the results after checking the audit and summaries. The PVC remains available for an interrupted
 run; delete it only after the copied results are verified.
 
