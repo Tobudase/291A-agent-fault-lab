@@ -151,13 +151,19 @@ def prepare_output(out, config, selection, resume=False):
     scope.write_text(json.dumps(selection, indent=2) + '\n')
 
 
+def default_output():
+    model = ''.join(c if c.isalnum() or c in '.-' else '-' for c in llm.MODEL).strip('.') or 'model'
+    root = 'runs/scratch' if llm.MODEL == 'deterministic-test-double' else 'runs'
+    return f"{root}/phase2-{model}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default="all", help="comma-separated task ids or 'all'")
     ap.add_argument("--faults", default="all", help="comma-separated fault names or 'all'")
     ap.add_argument("--methods", default="none,restart,verify", help=','.join(['none', 'verify', *METHODS]))
-    ap.add_argument("--out", default=f"runs/scratch/{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}",
-                    help='output directory; defaults to a fresh timestamped folder in runs/scratch')
+    ap.add_argument("--out", default=default_output(),
+                    help='output directory; defaults to runs/phase2-<model>-<timestamp>-<id> (offline: runs/scratch)')
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel episodes (default 1: parallel episodes on a shared API cause rate-limit waits)")
     ap.add_argument("--resume", action="store_true", help="skip episodes already saved under --out")

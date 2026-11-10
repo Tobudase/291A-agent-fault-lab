@@ -111,3 +111,17 @@ def test_partial_fault_resume_reruns_the_paired_group(tmp_path, monkeypatch):
         raise AssertionError('complete group should be reused')
     monkeypatch.setattr(run, 'run_workflow', no_work)
     assert run_fault(task, fault, clean, ok, methods, str(tmp_path), resume=True) == rows
+
+
+@pytest.mark.parametrize('model,root,slug', [
+    ('api-muse-glimmer-30b', 'runs', 'api-muse-glimmer-30b'),
+    ('org/model:version', 'runs', 'org-model-version'),
+    ('deterministic-test-double', 'runs/scratch', 'deterministic-test-double'),
+])
+def test_default_output_identifies_model_and_keeps_offline_disposable(monkeypatch, model, root, slug):
+    import run
+    monkeypatch.setattr(run.llm, 'MODEL', model)
+    path = Path(run.default_output())
+    assert path.parent == Path(root)
+    assert path.name.startswith('phase2-' + slug + '-')
+    assert path != Path(run.default_output())

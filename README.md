@@ -27,13 +27,13 @@ historical harness version; current code uses `v4-recovery-evidence`.)
 pip install -r requirements.txt
 export OPENAI_API_KEY=<your TritonAI key>      # model and endpoint default to the Phase 1 setup
 # smoke test: one task, one fault, default baseline methods
-python run.py --tasks T1 --faults R-incorrect --out runs/scratch/try
+python run.py --tasks T1 --faults R-incorrect --out runs/trial-muse-glimmer-30b
 # baseline grid on the current protocol (156 episodes; use a fresh output folder)
-python run.py --extra-faults --workers 4 --out runs/scratch/baselines-v4
-python summarize.py runs/scratch/baselines-v4 && python figures.py runs/scratch/baselines-v4
+python run.py --extra-faults --workers 4 --out runs/baselines-v4-muse-glimmer-30b
+python summarize.py runs/baselines-v4-muse-glimmer-30b && python figures.py runs/baselines-v4-muse-glimmer-30b
 # controlled E-timeout (different starting cash, so a separate folder)
-python run.py --faults E-timeout --cash ample --workers 4 --out runs/scratch/etimeout-v4
-python summarize.py runs/scratch/etimeout-v4
+python run.py --faults E-timeout --cash ample --workers 4 --out runs/etimeout-v4-muse-glimmer-30b
+python summarize.py runs/etimeout-v4-muse-glimmer-30b
 ```
 On Windows `cmd`, use `set VAR=value` instead of `export`. Each command prints `model=...` first: check it says
 `api-muse-glimmer-30b` if using the default setup. Phase 1 took about 45 min with `--workers 4` (1 worker: about 2 h); `--resume` continues
@@ -164,6 +164,14 @@ Verify rows add `detected` (the faulty node got a FAIL verdict and was regenerat
 
 ## Phase 2: recovery experiments
 
+Shared real-model runs (small T1 experiments; the full matrix commands are below):
+
+| Directory | Scope | Episodes |
+|---|---|---|
+| [phase2-smoke-muse-glimmer-30b](runs/phase2-smoke-muse-glimmer-30b/summary.md) | R-incorrect, E-timeout committed, P-malicious | 20 |
+| [phase2-etimeout-not-committed-smoke-muse-glimmer-30b](runs/phase2-etimeout-not-committed-smoke-muse-glimmer-30b/summary.md) | E-timeout not submitted | 8 |
+| [phase2-etimeout-unknown-smoke-muse-glimmer-30b](runs/phase2-etimeout-unknown-smoke-muse-glimmer-30b/summary.md) | E-timeout status unavailable | 8 |
+
 Phase 2 compares six methods on the same Researcher → Planner → Executor tasks:
 
 | Method | What it does |
@@ -196,23 +204,24 @@ size setting. Use the same settings when resuming. Offline tests below do not ne
 
 Run these **three commands** for the complete Phase 2 matrix (396 episodes). All use the configured real
 model, all six tasks and all six methods. Run them sequentially; each has its own output directory.
+The examples use the default Muse Glimmer 30B model. If you change `LLM_MODEL`, also change the model name in `--out`; the folder name does not select a model.
 
 ```bash
 # 300 episodes: 6 tasks × 8 faults × 6 methods + 12 clean controls.
 # Includes the R-distractor control; E-timeout commits but its response is lost.
 python run.py --extra-faults --cash ample \
   --methods none,restart,verify,selective,change_aware,reconcile \
-  --out runs/scratch/phase2-full/committed
+  --out runs/phase2-muse-glimmer-30b
 
 # 48 episodes: only E-timeout, with the first order never submitted.
 python run.py --faults E-timeout --timeout-outcome not_committed --cash ample \
   --methods none,restart,verify,selective,change_aware,reconcile \
-  --out runs/scratch/phase2-full/not-committed
+  --out runs/phase2-etimeout-not-committed-muse-glimmer-30b
 
 # 48 episodes: only E-timeout, committed but status query remains unavailable.
 python run.py --faults E-timeout --timeout-outcome unknown --cash ample \
   --methods none,restart,verify,selective,change_aware,reconcile \
-  --out runs/scratch/phase2-full/unknown
+  --out runs/phase2-etimeout-unknown-muse-glimmer-30b
 ```
 
 These commands default to one worker. Add `--workers 2` (or more) to run task/fault groups concurrently;
@@ -227,7 +236,7 @@ It runs **8 episodes**, not the full matrix: T1 × R-incorrect × six methods, p
 ```bash
 python run.py --tasks T1 --faults R-incorrect --cash ample \
   --methods none,restart,verify,selective,change_aware,reconcile \
-  --out runs/scratch/phase2-trial
+  --out runs/phase2-trial-muse-glimmer-30b
 ```
 
 ### Local tests (no API calls)
@@ -244,8 +253,10 @@ python tests/offline_smoke.py --extra-faults --cash ample \
 
 `tests/offline_smoke.py` accepts the same options as `run.py`. To check the two other timeout outcomes offline,
 use the corresponding full-experiment commands above with `python tests/offline_smoke.py` in place of
-`python run.py` and separate `phase2-offline/not-committed` and `phase2-offline/unknown` output directories.
-Its synthetic token counts and local timings are not model-performance measurements.
+`python run.py` and separate `runs/scratch/phase2-offline/not-committed` and
+`runs/scratch/phase2-offline/unknown` output directories.
+Its synthetic token counts and local timings are not model-performance measurements. GitHub CI runs the
+unit tests and all three deterministic matrices; these generated results stay out of Git.
 
 ### Command-line options
 
@@ -261,14 +272,13 @@ include `--methods` as shown above to compare all Phase 2 strategies. Use `pytho
 | `--cash` | `TASK_CASH` from environment, otherwise `legacy` | `legacy`: budget + $5,000; `ample`: twice the budget. Use `ample` for the duplicate-buy experiment. |
 | `--timeout-outcome` | `committed` | Controls E-timeout only: `committed` = committed/query confirms; `not_committed` = not submitted/query confirms; `unknown` = committed/query unavailable. Does not inject E-timeout unless that fault is selected. |
 | `--workers` | `1` | Number of concurrent task/fault groups. Does not change experiment scope; may be changed on resume. |
-| `--out` | Fresh timestamped directory in `runs/scratch/` | Explicit result directory. A new run requires a new or empty directory. |
+| `--out` | Fresh model-named, timestamped directory in `runs/` | Explicit result directory. A new run requires a new or empty directory. |
 | `--resume` | Off | Continue the existing `--out` with matching configuration and task/fault/method selection. Never combine with a new experiment's directory. |
 
 ### New runs versus resume
 
 For a **new experiment**, omit `--resume`. Reuse the commands above with a new `--out` name, or omit `--out`
 to get a fresh directory automatically. A non-empty directory is rejected rather than silently overwritten.
-Directory names such as `final` have **no special meaning** and are not used to decide completeness.
 
 For an **interrupted experiment**, repeat its original command with the same explicit `--out` and add
 `--resume` (two hyphens). For example, to continue the 300-episode main matrix:
@@ -276,7 +286,7 @@ For an **interrupted experiment**, repeat its original command with the same exp
 ```bash
 python run.py --extra-faults --cash ample \
   --methods none,restart,verify,selective,change_aware,reconcile \
-  --out runs/scratch/phase2-full/committed --resume
+  --out runs/phase2-muse-glimmer-30b --resume
 ```
 
 Resume checks model/endpoint settings, model parameters, source fingerprint, cash mode, timeout scenario,
@@ -294,14 +304,16 @@ Resume removes derived summaries, plots and rescore backups to prevent stale ana
 For each completed output directory, generate the human-readable summary and figures:
 
 ```bash
-python summarize.py runs/scratch/phase2-full/committed
-python figures.py runs/scratch/phase2-full/committed
+python summarize.py runs/phase2-muse-glimmer-30b
+python figures.py runs/phase2-muse-glimmer-30b
 ```
 
-Repeat with `not-committed` and `unknown`. Start with **`summary.md`**, then inspect individual traces only
+Repeat with the two `phase2-etimeout-…-muse-glimmer-30b` directories. Start with **`summary.md`**, then inspect individual traces only
 when investigating a result. `rescore.py` is optional: use it to recompute metrics after checker changes,
 not as a required step after every run.
-Local retained experiments, when present, are indexed in `runs/scratch/README.md`; scratch contents are not committed.
+Real-model experiment directories belong in `runs/` and are committed with their results, traces, summaries and figures.
+Use names such as `phase2-<model>` or `phase2-<scenario>-<model>`; add a trial/smoke label for a small run and a version/date for repeat experiments.
+`runs/scratch/` is git-ignored, disposable output for local tests and deterministic checks; it is not the location for shared experiment results.
 
 | File inside an experiment directory | Purpose |
 |---|---|

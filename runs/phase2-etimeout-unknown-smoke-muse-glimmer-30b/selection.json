@@ -1,0 +1,16 @@
+{
+  "tasks": [
+    "T1"
+  ],
+  "faults": [
+    "E-timeout"
+  ],
+  "methods": [
+    "change_aware",
+    "none",
+    "reconcile",
+    "restart",
+    "selective",
+    "verify"
+  ]
+}
