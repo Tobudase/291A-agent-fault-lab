@@ -25,6 +25,7 @@ def read_run(path, scenario):
         manifest = json.loads((root / 'manifest.json').read_text())
         selection = json.loads((root / 'selection.json').read_text())
         rows = load(str(root))
+        raw_rows = [json.loads(line) for line in (root / 'results.jsonl').read_text().splitlines()]
     except (OSError, ValueError, KeyError) as exc:
         raise ValueError(f'{root}: missing or invalid run files: {exc}') from exc
     expected_faults = FAULTS if scenario == 'committed' else ('E-timeout',)
@@ -39,6 +40,18 @@ def read_run(path, scenario):
     if len(actual) != len(expected) or set(actual) != expected:
         raise ValueError(f'{root}: expected {len(expected)} distinct episodes; '
                          f'found {len(actual)} rows and {len(set(actual))} distinct keys')
+    if len(raw_rows) != len(rows):
+        raise ValueError(f'{root}: derived and raw result row counts differ')
+    for row, raw_row in zip(rows, raw_rows):
+        if (row['task'], row['fault'], row['method']) != (raw_row['task'], raw_row['fault'], raw_row['method']):
+            raise ValueError(f'{root}: derived and raw result order differs')
+        trace_path = root / row['task'] / row['fault'] / row['method'] / 'trace.json'
+        try:
+            saved = json.loads(trace_path.read_text())
+        except (OSError, ValueError) as exc:
+            raise ValueError(f'{trace_path}: missing or invalid trace: {exc}') from exc
+        if saved.get('metrics') != raw_row:
+            raise ValueError(f'{trace_path}: trace metrics differ from results.jsonl')
     models = {r['model'] for r in rows}
     if len(models) != 1 or 'deterministic-test-double' in models:
         raise ValueError(f'{root}: expected one real model, found {sorted(models)}')
