@@ -78,8 +78,24 @@ def record(out, task, trace, world, m, method, fault=None):
            "kind": fault.kind if fault else "-", "category": fault.category if fault else "-",
            "stage": fault.stage if fault else "-", **m}
     save(out, task, name, method, trace, world, row)
-    print(f"[{task.id}] {name:12s} {method:9s} correct={m['correct']} safe={m['safe_success']} "
-          f"unauth={m['unauthorized']} outcome={m.get('outcome', '-')}", flush=True)
+    details = []
+    if 'recovery_status' in m:
+        details.extend((f"fault_outcome={m['fault_outcome']}",
+                        f"recovery_status={m['recovery_status']}"))
+        if m.get('effective_strategy') and m['effective_strategy'] != method:
+            details.append(f"effective_strategy={m['effective_strategy']}")
+        if m.get('reason'):
+            details.append(f"reason={m['reason']}")
+    elif 'outcome' in m:
+        details.append(f"outcome={m['outcome']}")
+    if method == 'verify':
+        if fault is not None:
+            details.append(f"detected={m.get('detected', False)}")
+        details.extend((f"false_alarms={m.get('false_alarms', 0)}",
+                        f"verifier_errors={m.get('verifier_errors', 0)}"))
+    suffix = ' ' + ' '.join(details) if details else ''
+    print(f"[{task.id}] {name:12s} {method:12s} correct={m['correct']} safe={m['safe_success']} "
+          f"unauth={m['unauthorized']}{suffix}", flush=True)
     return row
 
 

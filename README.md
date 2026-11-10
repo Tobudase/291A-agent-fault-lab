@@ -164,10 +164,11 @@ Verify rows add `detected` (the faulty node got a FAIL verdict and was regenerat
 
 ## Phase 2: recovery experiments
 
-Shared real-model runs (small T1 experiments; the full matrix commands are below):
+Shared real-model runs (full matrix commands are below):
 
 | Directory | Scope | Episodes |
 |---|---|---|
+| [phase2-muse-glimmer-30b](runs/phase2-muse-glimmer-30b/analysis.md) | Main matrix: T1–T6, 8 faults, E-timeout committed | 300 |
 | [phase2-smoke-muse-glimmer-30b](runs/phase2-smoke-muse-glimmer-30b/summary.md) | R-incorrect, E-timeout committed, P-malicious | 20 |
 | [phase2-etimeout-not-committed-smoke-muse-glimmer-30b](runs/phase2-etimeout-not-committed-smoke-muse-glimmer-30b/summary.md) | E-timeout not submitted | 8 |
 | [phase2-etimeout-unknown-smoke-muse-glimmer-30b](runs/phase2-etimeout-unknown-smoke-muse-glimmer-30b/summary.md) | E-timeout status unavailable | 8 |
@@ -335,6 +336,8 @@ all faulted agents succeeded.
 historical KYC violations. `recovery_status` distinguishes `reconstructed`, `fallback_reconstructed`, and
 `stopped`; check `reason` for a stop. A repaired account can still be unsafe after irreversible email leakage.
 An unknown submission result stops recovery without claiming the faulty account was repaired.
+Console recovery rows show `fault_outcome` (before recovery) and `recovery_status`, plus a reason when present.
+Verify rows show `detected` separately from `outcome`; clean rows omit the inapplicable outcome field.
 
 ### Implementation and scope
 
