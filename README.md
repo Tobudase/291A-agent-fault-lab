@@ -172,6 +172,9 @@ Completed real-model runs; see the [consolidated analysis](runs/phase2-muse-glim
 | [phase2-etimeout-not-committed-muse-glimmer-30b](runs/phase2-etimeout-not-committed-muse-glimmer-30b/summary.md) | T1–T6, E-timeout not submitted | 48 |
 | [phase2-etimeout-unknown-muse-glimmer-30b](runs/phase2-etimeout-unknown-muse-glimmer-30b/summary.md) | T1–T6, E-timeout status unavailable | 48 |
 
+The [complete-matrix audit](runs/PHASE2_AUDIT.md) independently checks every result row against its trace and
+confirms that all three runs use the same model and configuration apart from the intended timeout outcome.
+
 Phase 2 compares six methods on the same Researcher → Planner → Executor tasks:
 
 | Method | What it does |

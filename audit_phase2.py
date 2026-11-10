@@ -62,9 +62,11 @@ def read_run(path, scenario):
 
 def comparison(runs):
     models = {model for _, model, _ in runs.values()}
-    signatures = {manifest['signature'] for _, _, manifest in runs.values()}
-    if len(models) != 1 or len(signatures) != 1:
-        raise ValueError('the three runs use different models or agent configurations')
+    shared_configs = {json.dumps({key: value for key, value in manifest.items()
+                                  if key != 'timeout_outcome'}, sort_keys=True)
+                      for _, _, manifest in runs.values()}
+    if len(models) != 1 or len(shared_configs) != 1:
+        raise ValueError('the three runs use different models or configurations')
     model = next(iter(models))
     lines = ['# Phase 2 complete-matrix audit', '', f'Model: `{model}`. '
              'All three runs use six tasks, six methods, ample cash, and matching agent configuration.', '',
