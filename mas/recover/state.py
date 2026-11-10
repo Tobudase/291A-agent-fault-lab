@@ -131,7 +131,16 @@ def valid_prefix(old, new_steps, world, limit):
             if action.get('irreversible'):
                 valid = False
                 break
-            if action['tool'] != 'read_account' or node.step['op'] == 'read_account':
+            # Executors may observe the account or recheck an already-verified
+            # client before their one operation. Accept only proven no-ops;
+            # a new KYC verification, another client or extra trade still fails.
+            unchanged = action['before'] == action.get('after')
+            observation = action['tool'] == 'read_account' and action['args'] == {} and unchanged
+            recheck = (action['tool'] == 'verify_kyc'
+                       and action['args'] == {'client_id': world.client_id}
+                       and world.client_id in action['before']['kyc_verified'] and unchanged)
+            supplemental = action['tool'] != node.step['op'] and (observation or recheck)
+            if not supplemental:
                 actual.append((action['tool'], action['args']))
             cursor = action.get('after')
         if not valid or managed(cursor) != managed(after) or actual != [(node.step['op'], node.step['args'])]:

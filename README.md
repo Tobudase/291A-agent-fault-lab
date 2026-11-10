@@ -176,14 +176,21 @@ and [evidence boundary](mas/recover/evidence.py); the registry also supplies CLI
 - External history survives rollback. Recovery sees redacted timeout receipts and queries a simulated order-status service; still-unknown outcomes and unlogged state changes stop every strategy.
 - Reconcile assumes no unrecorded account drift. Successful traces save terminal state evidence independently of executor checkpoints, allowing a subsequent recovery.
 - Request retries and distinct business-duplicate requests are separate metrics; neither implements server-side idempotency.
+- Execution checks allow an extra account read or repeat KYC check only when trusted receipts prove no state change; repeat KYC must concern the already-verified task client. Extra trades and verification of another client still invalidate reuse.
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 # Full offline mechanism check (deterministic model double; no API calls)
 python tests/offline_smoke.py --extra-faults --cash ample --methods none,restart,verify,selective,change_aware,reconcile --out runs/scratch/phase2-offline
-# run.py loads .env; exported environment variables take precedence
-python run.py --tasks T1 --faults R-incorrect --cash ample --methods none,restart,verify,selective,change_aware,reconcile --out runs/scratch/phase2-smoke
+# Live smoke: run.py loads .env; exported environment variables take precedence
+export LLM_TIMEOUT=90 LLM_RETRIES=2
+python run.py --tasks T1 --faults R-incorrect,E-timeout,P-malicious --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke
+# Separate service outcomes (8 episodes each; main smoke above has 20)
+python run.py --tasks T1 --faults E-timeout --timeout-outcome not_committed --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke-not-committed
+python run.py --tasks T1 --faults E-timeout --timeout-outcome unknown --cash ample --methods none,restart,verify,selective,change_aware,reconcile --workers 1 --out runs/scratch/phase2-smoke-unknown
+# Repeat analysis for each output folder
+python rescore.py runs/scratch/phase2-smoke
 python summarize.py runs/scratch/phase2-smoke
 python figures.py runs/scratch/phase2-smoke
 ```
@@ -194,10 +201,35 @@ simulated service but leaves its status query unavailable: all recovery strategi
 state changes. A query that confirms non-submission permits recovery. There is no real trading-service
 adapter, server-side idempotency key, or online prevention of the initial blind retry.
 
-Validation: **106 deterministic tests pass**. The offline matrix covers 300 episodes plus 48 each for
+Validation: **111 deterministic tests pass**, including real-executor-style repeated KYC checks and rejection of new or other-client verification. The offline matrix covers 300 episodes plus 48 each for
 non-submission and unavailable status queries. All 24 recovery episodes in the unavailable-query case stop;
 historical email exfiltration remains unsafe after account repair. These validate simulated mechanisms,
-not real-model success rates. Phase 2 live-model validation remains pending API availability.
+not real-model success rates.
+
+**Live-model smoke (T1, Muse Glimmer 30B, ample cash).** The API is available again. This focused
+check covers 36 episodes: 20 for R-incorrect / E-timeout committed / P-malicious, and 8 each for
+not-committed and unknown timeout outcomes, including clean none/verify controls in each folder.
+The four recovery strategies start from the same faulty run within each scenario; verify runs separately.
+
+| scenario | four recovery strategies | interpretation |
+|---|---|---|
+| R-incorrect | 4/4 reconstructed; correct and safe | repaired the wrong rating and downstream allocation |
+| E-timeout: committed | 4/4 reconstructed; correct and safe | queried submission status, then repaired the duplicate purchase |
+| E-timeout: not_committed | 4/4 reconstructed; correct and safe | queried non-submission; the original executor retry had already achieved the target |
+| E-timeout: unknown | 4/4 stopped with `EFFECT_UNKNOWN` | no new model calls, compensation actions or account changes; original faulty state remains |
+| P-malicious | 4/4 reconstructed; correct but unsafe | historical simulated email leakage survives account repair |
+
+The verify baseline corrected R-incorrect and blocked P-malicious in this smoke, but failed both
+committed/unknown E-timeout cases; it does not inspect executor side effects. All six clean controls
+were correct and safe. All 36 saved results were rescored without changes; summaries and figures generated successfully.
+Local artifacts are under `runs/scratch/phase2-live-v4-{committed,not-committed,unknown}/` (git-ignored).
+Only the selected episodes in each `results.jsonl` belong to this smoke; extra traces from the interrupted
+full-grid attempt are excluded.
+
+This is a single-task smoke, **not a completed full live matrix or a statistical strategy ranking**.
+The model calls are real; accounts, trades, status queries and email effects remain simulated.
+Service throttling and an interrupted connection occurred during validation; incomplete fault groups
+were rerun as paired groups. Do not use these observations as a throughput benchmark.
 
 New runs use `v4-recovery-evidence` and a configuration manifest. Use a new output
 folder after changing code/configuration; old Phase 1 results remain readable but are not a
