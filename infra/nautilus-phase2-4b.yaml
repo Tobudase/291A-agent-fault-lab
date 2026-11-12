@@ -52,20 +52,15 @@ spec:
               value: qwen3-4b-instruct
             - name: PHASE2_REPO_DIR
               value: /work/291A-agent-fault-lab-4b
+            - name: PHASE2_RESUME
+              value: '0'
           image: python:3.11-bookworm
           command: [/bin/bash, -lc]
           args:
             - >-
               apt-get update -qq && apt-get install -y -qq git >/dev/null &&
-              if [ -d /work/291A-agent-fault-lab-4b/.git ]; then
-                git -C /work/291A-agent-fault-lab-4b fetch origin phase_2 &&
-                git -C /work/291A-agent-fault-lab-4b reset --hard origin/phase_2 &&
-                git -C /work/291A-agent-fault-lab-4b clean -fd;
-              else
-                git clone --branch phase_2 --single-branch https://github.com/ZKadelzq/291A-agent-fault-lab.git /work/291A-agent-fault-lab-4b;
-              fi &&
+              bash /config/nautilus_phase2_checkout.sh &&
               cd /work/291A-agent-fault-lab-4b &&
-              git apply /config/phase2.patch &&
               python -m pip install -q -r requirements-dev.txt &&
               bash scripts/nautilus_phase2_runner.sh
           resources:

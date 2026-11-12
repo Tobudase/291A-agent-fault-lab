@@ -4,7 +4,10 @@ set -euo pipefail
 # Run inside the dedicated ecepxie Job. The model server is the Ollama sidecar.
 export PHASE2_MODEL="${PHASE2_MODEL:-qwen3:30b-instruct}"
 export PHASE2_SLUG="${PHASE2_SLUG:-qwen3-30b-instruct}"
+export PHASE2_RESUME="${PHASE2_RESUME:-0}"
 cd "${PHASE2_REPO_DIR:-/work/291A-agent-fault-lab}"
+source scripts/nautilus_phase2_runlib.sh
+rm -f "/work/READY_TO_COPY-$PHASE2_SLUG" "/work/COPIED_TO_LOCAL-$PHASE2_SLUG"
 export LLM_BASE_URL=http://127.0.0.1:11434/v1
 export LLM_API_KEY=ollama
 export LLM_MODEL="$PHASE2_MODEL"
@@ -36,15 +39,21 @@ with urllib.request.urlopen(base + '/api/tags', timeout=30) as response:
     models = json.load(response)['models']
 model = next(m for m in models if m['name'] == model_name)
 from pathlib import Path
-Path(f'/work/model_identity-{slug}.json').write_text(json.dumps(model, indent=2) + '\n')
+identity = Path(f'/work/model_identity-{slug}.json')
+if identity.exists():
+    old = json.loads(identity.read_text())
+    if old['digest'] != model['digest']:
+        raise SystemExit('model digest changed; refusing to mix results')
+else:
+    identity.write_text(json.dumps(model, indent=2) + '\n')
 print('model digest:', model['digest'], flush=True)
 PY
 
 python preflight.py
 
 # A clean-only check prevents a full fault matrix from hiding a weak base model.
-python run.py --clean-only --methods none --workers 2 \
-  --out "/work/preflight-clean-$PHASE2_SLUG"
+run_phase2_matrix "/work/preflight-clean-$PHASE2_SLUG" \
+  --clean-only --methods none --workers 2
 python - <<'PY'
 import json, os
 from pathlib import Path
@@ -56,14 +65,14 @@ if good != 6:
 PY
 
 methods=none,restart,verify,selective,change_aware,reconcile
-python run.py --extra-faults --cash ample --workers 2 --methods "$methods" \
-  --out "/work/phase2-$PHASE2_SLUG-committed"
-python run.py --faults E-timeout --timeout-outcome not_committed --cash ample \
-  --workers 2 --methods "$methods" \
-  --out "/work/phase2-$PHASE2_SLUG-not-committed"
-python run.py --faults E-timeout --timeout-outcome unknown --cash ample \
-  --workers 2 --methods "$methods" \
-  --out "/work/phase2-$PHASE2_SLUG-unknown"
+run_phase2_matrix "/work/phase2-$PHASE2_SLUG-committed" \
+  --extra-faults --cash ample --workers 2 --methods "$methods"
+run_phase2_matrix "/work/phase2-$PHASE2_SLUG-not-committed" \
+  --faults E-timeout --timeout-outcome not_committed --cash ample \
+  --workers 2 --methods "$methods"
+run_phase2_matrix "/work/phase2-$PHASE2_SLUG-unknown" \
+  --faults E-timeout --timeout-outcome unknown --cash ample \
+  --workers 2 --methods "$methods"
 
 for folder in "/work/phase2-$PHASE2_SLUG-committed" "/work/phase2-$PHASE2_SLUG-not-committed" "/work/phase2-$PHASE2_SLUG-unknown"; do
     python summarize.py "$folder"

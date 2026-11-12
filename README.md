@@ -258,21 +258,44 @@ records the model digest and source commit, then runs and audits the three matri
 jobs or volumes.
 
 ```bash
+git fetch origin phase_2
 git diff origin/phase_2 HEAD > /tmp/cse291-phase2.patch
 kubectl --context nautilus -n ecepxie create configmap cse291-phase2-patch \
-  --from-file=phase2.patch=/tmp/cse291-phase2.patch
+  --from-file=phase2.patch=/tmp/cse291-phase2.patch \
+  --from-file=nautilus_phase2_checkout.sh=scripts/nautilus_phase2_checkout.sh \
+  --dry-run=client -o yaml | kubectl --context nautilus -n ecepxie apply -f -
 kubectl --context nautilus -n ecepxie apply -f infra/nautilus-phase2.yaml
 kubectl --context nautilus -n ecepxie logs -f job/cse291-phase2-qwen30b -c runner
 ```
 
 The ConfigMap carries the tested local commit when the shared GitHub branch cannot be pushed. Each Job clones
-`phase_2` and applies that patch before running; `source_commit-<slug>.txt` and
-`source_patch_sha256-<slug>.txt` identify the
-exact source. If the shared branch advances, regenerate and validate the patch before submitting a new job.
+`phase_2` and applies a nonempty patch before running; an empty patch is valid after the PR is merged. The
+checkout stamp, `source_commit-<slug>.txt`, and `source_patch_sha256-<slug>.txt` identify the exact source.
+If the shared branch advances, regenerate and validate the patch before submitting a **new** job.
+
+**Resume an interrupted Job:** keep its PVC, checkout, ConfigMap patch, and model tag unchanged. Delete only
+the stopped Job, set `PHASE2_RESUME` to `'1'` in its manifest, and apply that manifest again. The checkout
+helper verifies the original commit, patch and working diff before reuse; the runner checks the model digest,
+then passes `--resume` only to result directories that already have both run metadata files. Completed
+episodes are reused by `run.py`; a matrix that had not started runs normally. A changed source or model
+stops instead of mixing results. Keep `PHASE2_RESUME: '0'` for a new Job and use a fresh checkout/output
+location for an independent experiment. The same procedure applies to the 4B manifest.
+
+For example, after a **stopped** 30B Job, change `value: '0'` to `value: '1'` for `PHASE2_RESUME` in
+`infra/nautilus-phase2.yaml`, then run:
+
+```bash
+kubectl --context nautilus -n ecepxie delete job cse291-phase2-qwen30b --wait=true
+kubectl --context nautilus -n ecepxie apply -f infra/nautilus-phase2.yaml
+```
+
+Do not recreate the ConfigMap with a different patch for that resume. The Job deletion leaves its PVC and
+result directories intact. Use `cse291-phase2-qwen4b` and its manifest for a stopped 4B Job.
 
 The runner waits after writing `/work/READY_TO_COPY-<slug>`, so the result files can be copied from its pod
 before it exits. Copy the three `phase2-<slug>-*` directories, `PHASE2_AUDIT-<slug>.md`,
-`model_identity-<slug>.json`, and `source_commit-<slug>.txt`; then create `/work/COPIED_TO_LOCAL-<slug>` in the
+`model_identity-<slug>.json`, `source_checkout-<slug>.txt`, and `source_commit-<slug>.txt`;
+then create `/work/COPIED_TO_LOCAL-<slug>` in the
 runner container. The slug is `qwen3-30b-instruct` or `qwen3-4b-instruct`.
 Only commit the results after checking the audit and summaries. The PVC remains available for an interrupted
 run; delete it only after the copied results are verified.
