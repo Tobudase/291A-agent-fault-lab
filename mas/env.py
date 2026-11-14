@@ -51,6 +51,8 @@ class World:
         self.branch_id = uuid.uuid4().hex
         self.recovery_mode = False
         self._permit = None  # single-use exact compensation authorization, never a tool argument
+        self.expected_operation = None  # recovery executor step; never model-controlled
+        self._expected_committed = False
         # Simulated service-owned status, not part of a recovery World/trace.
         self._order_outcomes = {}
         self._unavailable_orders = set()
@@ -73,7 +75,19 @@ class World:
         self._permit = None
         blocked = self.recovery_mode and (spec['irreversible'] or
                   (name in {'sell', 'clear_stop_loss'} and not permitted))
+        contract_rejected = False
+        expected = self.expected_operation if self.recovery_mode else None
+        if expected is not None:
+            from .plan import action_matches
+            extra = (name == 'read_account' and args == {}
+                     or (name == 'verify_kyc' and args == {'client_id': self.client_id}
+                         and self.client_id in self.state['kyc_verified']))
+            if not extra and (self._expected_committed or not action_matches(expected, name, args)):
+                contract_rejected = True
         try:
+            if contract_rejected:
+                raise ValueError('recovery step rejected: use exactly the authorized operation '
+                                 + json.dumps({'op': expected['op'], 'args': expected['args']}))
             if blocked:
                 raise ValueError('operation is not authorized during recovery')
             before_call = getattr(self.tool_hook, 'before_call', None)
@@ -94,7 +108,10 @@ class World:
                "committed": success if success or before == after else None,
                "operation_id": self.operation_id, "branch_id": self.branch_id, "active": True,
                "recovery_authorized": bool(permitted and not blocked),
-               "phase": 'recovery' if self.recovery_mode else 'initial'}
+               "phase": 'recovery' if self.recovery_mode else 'initial',
+               "rejected_contract": contract_rejected}
+        if expected is not None and not contract_rejected and success and name == expected['op']:
+            self._expected_committed = True
         self._order_outcomes[rec['id']] = rec['committed']
         if self.tool_hook:
             self.tool_hook(rec)

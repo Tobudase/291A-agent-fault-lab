@@ -104,6 +104,10 @@ class RecoveryRuntime:
 
     def validate(self):
         for action in self.world.log[self.new_actions_start:]:
+            if action.get('rejected_contract'):
+                require(action['before'] == action['after'] and action['committed'] is False,
+                        'REJECTED_ACTION_MUTATED', False)
+                continue
             require(not action.get('irreversible'), 'EXTERNAL_OPERATION_BLOCKED', False)
             require(action.get('committed'), 'RECOVERY_ACTION_FAILED')
         if any(n.agent == 'executor' for n in self.trace.nodes.values()):
@@ -141,7 +145,21 @@ def recover(ctx, source, strategy, status_reader=None):
         for u in usage:
             cost = add_cost(cost, u)
         events = copy.deepcopy(runtime.world.log[runtime.new_actions_start:])
-        audit.append({'strategy': selected.name, 'published': failure is None, 'actions': events})
+        violations = []
+        for action in events:
+            if action.get('rejected_contract'):
+                node_id = action['by']
+                expected = (runtime.steps[int(node_id.split(':')[1])]
+                            if node_id.startswith('exec:') else None)
+                actual_args = action['args'] if isinstance(action['args'], dict) else {}
+                want_args = expected['args'] if expected else {}
+                changed_keys = sorted(k for k in set(actual_args) | set(want_args)
+                                      if actual_args.get(k) != want_args.get(k))
+                violations.append({'node': node_id, 'expected_op': expected['op'] if expected else None,
+                                   'actual_op': action['tool'], 'different_args': changed_keys,
+                                   'no_effect': action['before'] == action['after']})
+        audit.append({'strategy': selected.name, 'published': failure is None, 'actions': events,
+                      'contract_violations': violations})
         if failure:
             errors.append(failure.reason)
             if not failure.fallback:
@@ -171,5 +189,6 @@ def recover(ctx, source, strategy, status_reader=None):
              'unrecoverable': len(source.state['external']), 'decisions': decisions,
              'invalidated': sorted(runtime.invalid),
              'recovery_status_queries': queries,
-             'recovery_audit': audit, 'source_trace_id': ctx.old_trace.run_id}
+             'recovery_audit': audit, 'source_trace_id': ctx.old_trace.run_id,
+             'contract_violations': [v for entry in audit for v in entry['contract_violations']]}
     return RecoveryResult(result_trace, stats)

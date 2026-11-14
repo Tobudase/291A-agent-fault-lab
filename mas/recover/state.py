@@ -2,7 +2,7 @@
 import copy
 import math
 
-from ..plan import normalize_steps, same_step
+from ..plan import normalize_steps, same_step, action_matches
 from ..tasks import claimed_purchases
 from .contracts import RecoveryError
 
@@ -124,6 +124,12 @@ def valid_prefix(old, new_steps, world, limit):
             break
         cursor, actual, valid = before, [], True
         for action in node.actions:
+            if action.get('rejected_contract'):
+                if (receipts.get(action['id']) != action or action.get('before') != action.get('after')
+                        or action.get('committed') is not False):
+                    valid = False
+                    break
+                continue  # rejected before execution; not an applied state action
             if (receipts.get(action['id']) != action or not action.get('before')
                     or managed(action['before']) != managed(cursor) or not action.get('committed')):
                 valid = False
@@ -143,7 +149,8 @@ def valid_prefix(old, new_steps, world, limit):
             if not supplemental:
                 actual.append((action['tool'], action['args']))
             cursor = action.get('after')
-        if not valid or managed(cursor) != managed(after) or actual != [(node.step['op'], node.step['args'])]:
+        if (not valid or managed(cursor) != managed(after)
+                or len(actual) != 1 or not action_matches(node.step, *actual[0])):
             break
         count += 1
     return count
