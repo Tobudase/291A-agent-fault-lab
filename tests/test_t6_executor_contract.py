@@ -87,3 +87,35 @@ def test_t6_strict_trades_and_report_formatting_only():
     buy = normalize_steps([{'op': 'buy', 'args': {'ticker': 'XOM', 'amount_usd': 7000}}])[0]
     assert not action_matches(buy, 'buy', {'ticker': 'XOM', 'amount_usd': 6999})
     assert not action_matches(buy, 'sell', {'ticker': 'XOM', 'shares': 1})
+
+
+def test_wrong_trade_amount_cannot_commit_before_bounded_correction(monkeypatch):
+    """The optional contract guard is exercised with a forced Executor deviation.
+
+    No A/B feature flag or extra official fault category is needed.
+    """
+    from conftest import message, tool
+
+    task = TASKS[0]
+    step = normalize_steps([{'op': 'buy', 'args': {'ticker': 'AAPL', 'amount_usd': 5000}}])[0]
+    w = World(task.client_id, 20000)
+    w.call('verify_kyc', {'client_id': task.client_id}, 'setup')
+    w.recovery_mode = True
+
+    def wrong_then_correct(messages, tools=None, **kwargs):
+        replies = [m for m in messages if m['role'] == 'tool']
+        correction = any(m['role'] == 'user' and 'rejected BEFORE execution' in m['content']
+                         for m in messages)
+        if not replies:
+            return tool('buy', {'ticker': 'AAPL', 'amount_usd': 6000})
+        if correction and len(replies) == 1:
+            return tool('buy', step['args'])
+        return message('Completed.')
+
+    monkeypatch.setattr(llm, 'chat', wrong_then_correct)
+    node = agents.execute(task, 0, step, w)
+    assert [a['rejected_contract'] for a in node.actions] == [True, False]
+    assert node.actions[0]['before'] == node.actions[0]['after']
+    assert not node.actions[0]['committed'] and node.actions[1]['committed']
+    assert w.state['positions']['AAPL'] == 26  # $5000 / $190, NOT $6000 / $190
+    assert w.state['cash'] == 20000 - 26 * 190

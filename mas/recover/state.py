@@ -76,6 +76,7 @@ def target_state(task, plan, reports, initial, quote):
             require(shares > 0, 'ZERO_SHARES')
             target['positions'][ticker] = target['positions'].get(ticker, 0) + shares
             target['cash'] -= shares * price
+            target['trade_net_spent'] = target.get('trade_net_spent', 0.0) + shares * price
             require(target['cash'] >= -0.001, 'INSUFFICIENT_TARGET_CASH')
             seen.add(ticker)
         elif op == 'set_stop_loss':

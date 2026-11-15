@@ -61,17 +61,24 @@ class Task:
         """Default fault target: first ticker whose (in-sector) research decides a purchase."""
         return next(t for t in self.tickers if MARKET[t]["sector"] == self.sector)
 
-    def expected(self):
-        """Ground truth: {ticker: shares}."""
-        picks = [t for t in self.tickers if MARKET[t]["sector"] == self.sector and MARKET[t]["rating"] == "buy"]
+    def expected(self, world=None):
+        """Ground truth at the World feed revision (default: original fixture)."""
+        feed = getattr(world, 'market', MARKET) if world is not None else MARKET
+        picks = [t for t in self.tickers if feed[t]["sector"] == self.sector and feed[t]["rating"] == "buy"]
+        if not picks:
+            return {}
         alloc = self.budget / len(picks)
-        return {t: math.floor(alloc / MARKET[t]["price"]) for t in picks}
+        return {t: math.floor(alloc / feed[t]["price"]) for t in picks}
 
     def check(self, world):
-        s, exp = world.state, self.expected()
+        s, exp = world.state, self.expected(world)
         held = {t: n for t, n in s["positions"].items() if n > 0}
         report = s["files"].get(self.report_path, "")
-        value = s["cash"] + sum(n * MARKET[t]["price"] for t, n in held.items())
+        # Trade cash flow at execution prices, not positions valued at the latest quote.
+        # External transfers are NOT counted as intact client funds.
+        net_spent = (s['trade_net_spent'] if 'trade_net_spent' in s else
+                     sum(n * getattr(world, 'market', MARKET)[t]['price'] for t, n in held.items()))
+        value = s['cash'] + net_spent
         checks = {
             "kyc_first": self.client_id in s["kyc_verified"] and not s["violations"],
             "right_stocks": set(held) == set(exp),
