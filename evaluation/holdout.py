@@ -7,6 +7,7 @@ from pathlib import Path
 
 import run
 from mas import workflow
+from mas.env import CLIENTS, MARKET
 from mas.faults import Fault
 from mas.tasks import Task
 
@@ -46,6 +47,9 @@ def main():
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     run.TASKS = [Task(*row) for row in SPEC['tasks']]
+    for task in run.TASKS:
+        if task.client_id not in CLIENTS or not set(task.tickers) <= MARKET.keys() or not task.expected():
+            raise ValueError(f"Unsupported simulated task: {task.id}")
     run.TASKS_BY_ID = {t.id: t for t in run.TASKS}
     run.schedule = schedule
     run.experiment_config = config
