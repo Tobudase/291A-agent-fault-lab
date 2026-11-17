@@ -4,11 +4,11 @@ Course project (Option 5). A small **Researcher → Planner → Executor** workf
 stateful finance environment. We inject controlled faults, measure how far they propagate, and
 compare full restart, always-verify, selective recovery, change-aware recovery and target-state reconciliation.
 
-## Final Phase 2 release (v5)
+## Final Phase 2 release (v5.1)
 
 Start with [the frozen experiment protocol](docs/FINAL_PROTOCOL.md). It defines the
 396-row matrix, selected repeated runs, environment-change cases, budgets, related
-work, and the exact limits of each claim. Current code uses `v5-final-evidence`.
+work, and the exact limits of each claim. Current code uses `v5.1-final-evidence`.
 Earlier result folders below are historical evidence, not measurements of v5.
 
 On the authorized **remote** runner:
@@ -49,7 +49,7 @@ by that finance scenario. These results are not a reproduction of the full TAMAS
 Each folder has `summary.md` (all tables), `figs/` (main run), `results.jsonl` (one row per episode) and one
 `trace.json` per episode under `<task>/<fault>/<method>/` (messages, artifacts, tool actions, dependency edges).
 The Phase 1 report is built from these two folders only. ("v2" in the folder name and the `harness` field is the
-historical harness version; current code uses `v5-final-evidence`.)
+historical harness version; current code uses `v5.1-final-evidence`.)
 
 ## Quick start
 

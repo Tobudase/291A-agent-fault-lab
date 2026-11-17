@@ -30,7 +30,7 @@ from mas.trace import Node, Trace
 from mas.workflow import run_workflow
 
 
-HARNESS = "v5-final-evidence"
+HARNESS = "v5.1-final-evidence"
 
 
 def expected_episode_keys(tasks, faults, methods, extra=False):

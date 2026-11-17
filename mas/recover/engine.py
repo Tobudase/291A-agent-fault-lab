@@ -220,6 +220,8 @@ def recover(ctx, source, strategy, status_reader=None):
                                    'actual_op': action['tool'], 'different_args': changed_keys,
                                    'no_effect': action['before'] == action['after']})
         audit.append({'strategy': selected.name, 'published': False, 'actions': events,
+                      'trace': runtime.trace.to_dict(),
+                      'model_usage': copy.deepcopy(usage),
                       'contract_violations': violations, 'market_changed': sorted(runtime.market_changed),
                       'decisions': copy.deepcopy(runtime.decisions),
                       'overhead_s': runtime._overhead_s,

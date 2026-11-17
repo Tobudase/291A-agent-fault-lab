@@ -37,3 +37,5 @@ Do not tune or discard cases because a method performs poorly. Preserve all plan
 - [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence) and [durable execution](https://docs.langchain.com/oss/python/langgraph/durable-execution): saved graph state does not itself undo external side effects. We retain historical safety violations and separate internal reconstruction from safe completion.
 
 Reconcile uses deterministic delta execution instead of a full LLM executor chain. Its token advantage includes that architectural difference; it is an extension, not isolated evidence of dependency precision. Selective and change-aware vs restart are the central course comparison.
+
+Every recovery attempt, including a discarded candidate before fallback, archives its complete node messages, actions, checkpoints and model-usage ledger. Final-token totals must equal the sum of all attempt usage entries. Development runs made before this archival fix are excluded from the final cohort.

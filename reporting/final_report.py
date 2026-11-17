@@ -15,6 +15,7 @@ from mas.env import World
 from mas.tasks import TASKS_BY_ID
 from mas import tasks as tasks_mod
 from audit_phase2 import read_run, comparison
+from run import experiment_config
 
 METHODS = ['none', 'verify', 'restart', 'selective', 'change_aware', 'reconcile']
 RECOVERY = METHODS[2:]
@@ -46,6 +47,13 @@ def validate_trace(path):
     stats = data['metrics']
     if 'recovery_status' in stats:
         audits = stats['recovery_audit']
+        for attempt in audits:
+            if 'trace' not in attempt or 'model_usage' not in attempt:
+                raise ValueError(f'{path}: missing full attempt evidence')
+        recorded_tokens = sum(u.get('prompt_tokens',0) + u.get('completion_tokens',0)
+                              for a in audits for u in a['model_usage'])
+        if recorded_tokens != stats['recovery_tokens']:
+            raise ValueError(f'{path}: attempt token ledger mismatch')
         published = sum(a['published'] for a in audits)
         if published != int(stats['recovery_status'] != 'stopped'):
             raise ValueError(f'{path}: wrong publication count')
@@ -79,6 +87,10 @@ def main():
     a = p.parse_args()
     root = a.root
     runs = {s: read_run(root / s, s) for s in ('committed','not-committed','unknown')}
+    current = experiment_config()
+    for name, (_, _, config) in runs.items():
+        if any(config[k] != current[k] for k in ('signature', 'harness_digest')):
+            raise ValueError(f'{name}: the auditor code/model configuration differs from the experiment')
     (root / 'MATRIX_AUDIT.md').write_text(comparison(runs))
     rows_by_run = {s: r[0] for s, r in runs.items()}
     for rep in (2, 3):
@@ -180,14 +192,14 @@ def main():
         lines.append(f"| {r['scenario']} | {r['method']} | {completed(r)} | {r['effective_strategy']} | {r['total_tokens']} |")
     lines += ['', '环境变化在恢复前发生并在恢复期间固定；reference 是评估用 clean run，不输入恢复算法。Reconcile 的 market-drift 结果包含 restart fallback。', '',
               '## Tracking 与 recovery 开销', '',
-              '| Method | Tool bookkeeping ms | Trace/checkpoint ms | Recovery components ms | Mean total latency s |',
-              '|---|---:|---:|---:|---:|']
+              '| Method | Tool bookkeeping ms | Trace/checkpoint ms | Recovery components ms | Mean total latency s | API backoff s |',
+              '|---|---:|---:|---:|---:|---:|']
     for method in METHODS:
         rs = [r for r in main_rows if r['method']==method]
-        lines.append(f"| {method} | {mean(rs,'tool_tracking_s')*1000:.3f} | {st.mean(sum(r.get('trace_overhead_s',{}).values()) for r in rs)*1000:.3f} | {st.mean(sum(r.get('recovery_overhead_s',{}).values()) for r in rs)*1000:.3f} | {mean(rs,'total_latency'):.2f} |")
+        lines.append(f"| {method} | {mean(rs,'tool_tracking_s')*1000:.3f} | {st.mean(sum(r.get('trace_overhead_s',{}).values()) for r in rs)*1000:.3f} | {st.mean(sum(r.get('recovery_overhead_s',{}).values()) for r in rs)*1000:.3f} | {mean(rs,'total_latency'):.2f} | {mean(rs,'total_backoff'):.2f} |")
     io = [read(p) for p in root.rglob('artifact_io.json')]
     lines += ['', f"归档（{len(io)} traces）：平均 serialization {st.mean(x['serialization_s'] for x in io)*1000:.3f} ms，平均 write {st.mean(x['write_s'] for x in io)*1000:.3f} ms。", '',
-              '计时是已声明组件的 instrumented time，包含 timer 本身成本；不是 tracing on/off 的因果减速实验。归档时间在 episode latency 之外。恢复行统计新增恢复尝试，none/verify 行统计完整 workflow；不能将重叠计时相加作为独立总耗时。', '',
+              '计时是已声明组件的 instrumented time，包含 timer 本身成本；不是 tracing on/off 的因果减速实验。归档时间在 episode latency 之外。恢复行统计新增恢复尝试，none/verify 行统计完整 workflow；不能将重叠计时相加作为独立总耗时。共享 API 的并发和限流影响 observed latency，成本结论优先依据 tokens；扣除 backoff 也不能模拟独占服务。', '',
               '## 能支持的结论与限制', '',
               '- 主要比较 selective/change-aware 对 restart；reconcile 的成本还受确定性 executor 影响。',
               '- 验证是预防，恢复发生在故障之后。泄露不可撤回，所以事后恢复不应被描述为普遍更安全。',

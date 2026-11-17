@@ -28,6 +28,10 @@ def test_fallback_costs_and_work_include_failed_attempt():
     assert stats['recovery_status'] == 'fallback_reconstructed'
     assert len(stats['recovery_audit']) == 2
     assert [a['published'] for a in stats['recovery_audit']] == [False, True]
+    assert all(a['trace']['nodes'] for a in stats['recovery_audit'])
+    assert all(any(n['messages'] for n in a['trace']['nodes']) for a in stats['recovery_audit'])
+    assert stats['recovery_tokens'] == sum(u['prompt_tokens'] + u['completion_tokens']
+                                           for a in stats['recovery_audit'] for u in a['model_usage'])
     for key, value in stats['recovery_overhead_s'].items():
         assert value == sum(a['overhead_s'][key] for a in stats['recovery_audit'])
     assert stats['tool_tracking_s'] == sum(a['tool_tracking_s'] for a in stats['recovery_audit'])
