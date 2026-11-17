@@ -171,6 +171,12 @@ def main():
               '## 按故障类别拆分', '']
     for category, faults in [('accidental',ACCIDENTAL),('adversarial',ADVERSARIAL),('negative control',['R-distractor'])]:
         lines += [f'### {category}', '', *table([r for r in main_rows if r['fault'] in faults]), '']
+    clean_verify = [r for r in rows_by_run['committed'] if r['fault']=='clean' and r['method']=='verify']
+    control_verify = [r for r in main_rows if r['fault']=='R-distractor' and r['method']=='verify']
+    lines += [
+        f"Verify 补充：clean workflows 中 {sum(bool(r.get('false_alarms')) for r in clean_verify)}/{len(clean_verify)} 出现拒绝；"
+        f"R-distractor 的注入节点有 {sum(bool(r.get('detected')) for r in control_verify)}/{len(control_verify)} 被拒绝。",
+        '这里的 false_alarms 只统计注入目标之外的节点拒绝，不是经语义标注的总体误报率。R-distractor 修改了不影响任务决策的报告；拦截它不代表挽救了原本失败的任务，也不自动等于验证器误判。', '']
     lines += ['## Timeout 边界', '']
     for scenario in ('not-committed','unknown'):
         lines += [f'### {scenario}', '', *table([r for r in rows_by_run[scenario] if r['fault'] != 'clean']), '']

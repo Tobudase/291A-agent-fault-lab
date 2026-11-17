@@ -6,16 +6,38 @@ compare full restart, always-verify, selective recovery, change-aware recovery a
 
 ## Final Phase 2 release (v5.1)
 
+**Completed November 17, 2026, on Nautilus:** 149 tests passed; all 524 archived
+traces passed the independent release audit. See the
+[final report](runs/phase2-final-muse-20261117/FINAL_REPORT.md),
+[audit](runs/phase2-final-muse-20261117/RELEASE_AUDIT.json),
+[reuse provenance](runs/phase2-final-muse-20261117/PROVENANCE.md), and
+[figures](runs/phase2-final-muse-20261117/committed/figs).
+
+Across 48 main task/fault pairs, restart, selective and change-aware each achieved
+48/48 final-state correctness and 38/48 safe completion. Selective and change-aware
+used **14.1% and 27.5% fewer total tokens** than restart, respectively, including
+the faulty source run. Ten irreversible leak cases remained unsafe. Verify prevented
+those leaks but missed executor timeouts, reaching 42/48 safe completion on its
+separate preventive runs. These results support different roles for prevention and
+recovery, not universal safety superiority.
+
+All methods completed the eight environment-change cases safely. Reconcile required
+restart fallback in all eight and cost more than restart there. All 24 recovery
+attempts with unknown commit status stopped; they are not counted as completed
+recovery. Selected T1/T6 cells have three repetitions; the full matrix has one
+observation per cell. This is a single-model, synthetic course benchmark.
+
 Start with [the frozen experiment protocol](docs/FINAL_PROTOCOL.md). It defines the
 396-row matrix, selected repeated runs, environment-change cases, budgets, related
 work, and the exact limits of each claim. Current code uses `v5.1-final-evidence`.
-Earlier result folders below are historical evidence, not measurements of v5.
+Earlier result folders below are historical evidence, not measurements of v5.1.
 
 On the authorized **remote** runner:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-final.lock
 bash scripts/run_final_experiments.sh /work/phase2-final
+python analyze_phase2_provenance.py --run /work/phase2-final/committed --out /work/phase2-final/PROVENANCE.md
 python reporting/final_report.py /work/phase2-final
 ```
 
@@ -59,11 +81,11 @@ export OPENAI_API_KEY=<your TritonAI key>      # model and endpoint default to t
 # smoke test: one task, one fault, default baseline methods
 python run.py --tasks T1 --faults R-incorrect --out runs/trial-muse-glimmer-30b
 # baseline grid on the current protocol (156 episodes; use a fresh output folder)
-python run.py --extra-faults --workers 4 --out runs/baselines-v4-muse-glimmer-30b
-python summarize.py runs/baselines-v4-muse-glimmer-30b && python figures.py runs/baselines-v4-muse-glimmer-30b
+python run.py --extra-faults --workers 4 --out runs/baselines-v51-muse-glimmer-30b
+python summarize.py runs/baselines-v51-muse-glimmer-30b && python figures.py runs/baselines-v51-muse-glimmer-30b
 # controlled E-timeout (different starting cash, so a separate folder)
-python run.py --faults E-timeout --cash ample --workers 4 --out runs/etimeout-v4-muse-glimmer-30b
-python summarize.py runs/etimeout-v4-muse-glimmer-30b
+python run.py --faults E-timeout --cash ample --workers 4 --out runs/etimeout-v51-muse-glimmer-30b
+python summarize.py runs/etimeout-v51-muse-glimmer-30b
 ```
 On Windows `cmd`, use `set VAR=value` instead of `export`. Each command prints `model=...` first: check it says
 `api-muse-glimmer-30b` if using the default setup. Phase 1 took about 45 min with `--workers 4` (1 worker: about 2 h); `--resume` continues
