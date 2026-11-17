@@ -21,7 +21,9 @@ Multi-agent LLM systems pass results through messages and shared state, so one b
 unsafe actions. We build a small researcher–planner–executor workflow with programmatically checkable
 outcomes and measure how injected faults propagate (Phase 1). We then show that tracking provenance,
 including shared-state reads and writes, lets the system recover by recomputing only the affected steps.
-This is cheaper than a full restart and safer than verifying everything, but some actions cannot be undone (Phase 2).
+We evaluate its cost and correctness against full restart and preventive verification.
+Some internal work can be reused, but irreversible actions cannot be undone; prevention
+and post-hoc recovery address different points in the failure lifecycle (Phase 2).
 
 ---
 
@@ -76,6 +78,10 @@ This is cheaper than a full restart and safer than verifying everything, but som
   declared `uses` invalidate 2.5 for R-incorrect, i.e. they under-invalidate when the plan itself changes.
 
 ## 6. Results — Recovery (Phase 1 baselines + Phase 2)
+Final v5 submission: use the frozen scope in `docs/FINAL_PROTOCOL.md` and the generated
+`FINAL_REPORT.md` / `RELEASE_AUDIT.json` from `reporting/final_report.py`.
+The numerical bullets below describe the historical v4 cohort only. Do not replace
+individual rows with T6 fixes or v5 results and present them as one experiment.
 - Table 3 data: main-matrix `runs/phase2-muse-glimmer-30b/analysis.md`: per method final safe, direct/fallback/stopped, tokens, latency, mean recomputed/retained, historical external effects. The exact 396-row scope and matched settings are checked in `runs/PHASE2_AUDIT.md`.
 - Cost-versus-safety figure: `runs/phase2-muse-glimmer-30b/figs/fig4_cost.png`; use `safe_success` and show all four recovery strategies, verify, and none.
 - Reuse validity: `runs/PHASE2_PROVENANCE.md` verifies all 120/120 selective retained nodes against source identity and original action receipts; 114/120 have exact clean-control content/data. Explain why clean-text equality is not a semantic oracle. Change-aware retains 209 nodes, including 86 invalidated executor-prefix nodes revalidated against the repaired plan.
@@ -84,7 +90,9 @@ This is cheaper than a full restart and safer than verifying everything, but som
 - Detection vs. recovery: the main-matrix verifier flags 30 fault episodes, including six harmless `R-distractor` cases, and has zero false alarms on clean controls. It is a separate preventive run and cannot detect executor timeout effects. Report `safe_success` and published reconstruction separately.
 
 ## 7. Discussion & Limitations
-- Simulated tools, six tasks, one real model, one run per cell, and one-shot post-hoc injection. No confidence intervals or real trading adapter; price and account drift outside the trace are refused, not adapted to.
+- Simulated tools, six tasks, one real model, and one-shot post-hoc injection. v5 adds
+  selected three-repeat cells and pinned market-drift cases; unrecorded account drift
+  remains fail-closed. No real trading adapter or general significance claim.
 - No guarantee against arbitrary malicious agents (expected by the spec).
 
 ## 8. Experience (required by the course for the final report)

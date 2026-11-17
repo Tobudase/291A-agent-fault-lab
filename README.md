@@ -4,6 +4,36 @@ Course project (Option 5). A small **Researcher → Planner → Executor** workf
 stateful finance environment. We inject controlled faults, measure how far they propagate, and
 compare full restart, always-verify, selective recovery, change-aware recovery and target-state reconciliation.
 
+## Final Phase 2 release (v5)
+
+Start with [the frozen experiment protocol](docs/FINAL_PROTOCOL.md). It defines the
+396-row matrix, selected repeated runs, environment-change cases, budgets, related
+work, and the exact limits of each claim. Current code uses `v5-final-evidence`.
+Earlier result folders below are historical evidence, not measurements of v5.
+
+On the authorized **remote** runner:
+
+```bash
+pip install -r requirements-dev.txt
+bash scripts/run_final_experiments.sh /work/phase2-final
+python reporting/final_report.py /work/phase2-final
+```
+
+The final audit requires 524 full traces (476 standard/repeated rows, 32 environment
+recovery rows, 16 environment control traces). It independently rechecks final state,
+source pairing, retained-node provenance, publication status and fallback overhead.
+`FINAL_REPORT.md`, `RELEASE_AUDIT.json`, per-run figures and `SHA256SUMS.json` are the
+submission evidence. Poor outcomes remain in the report. Runtime metrics and traces
+are never silently substituted with historical results.
+
+Changes from v4: exact integer share checking; bounded executor-contract correction
+from the T6 fix; market-version invalidation; complete drift trace archives; correct
+publication flags; overhead accumulated across fallback; guarded source-paired resume;
+rescoring keeps embedded trace metrics consistent. Report text validation remains a
+limited heuristic. Reconcile includes deterministic execution and is not an isolated
+test of dependency precision. Verification prevents some irreversible leaks that
+post-hoc recovery cannot undo.
+
 The scenario, agent roles, tool vocabulary and attack styles (DPI / IPI / Byzantine) come from the finance scenario of
 [TAMAS](https://github.com/microsoft/TAMAS). TAMAS tools are stateless and its outcomes are scored by a GPT-4o judge.
 We need *programmatically checkable outcomes* and *shared state*, so we re-implemented the scenario as a small
@@ -19,7 +49,7 @@ deterministic environment instead of running TAMAS directly.
 Each folder has `summary.md` (all tables), `figs/` (main run), `results.jsonl` (one row per episode) and one
 `trace.json` per episode under `<task>/<fault>/<method>/` (messages, artifacts, tool actions, dependency edges).
 The Phase 1 report is built from these two folders only. ("v2" in the folder name and the `harness` field is the
-historical harness version; current code uses `v4-recovery-evidence`.)
+historical harness version; current code uses `v5-final-evidence`.)
 
 ## Quick start
 
