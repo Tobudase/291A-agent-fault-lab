@@ -9,6 +9,8 @@ python -m pip freeze > "$root/dependencies.txt"
 sha256sum evaluation/holdout.{json,py} evaluation/tracking.py > "$root/protocol.sha256"
 python -m evaluation.tracking /work/final-1117/release/committed "$root/tracking.json"
 for rep in 1 2 3; do
-  python -m evaluation.holdout "$root/repeat-$rep" --resume
+  opts=()
+  if [[ -f "$root/repeat-$rep/manifest.json" ]]; then opts+=(--resume); fi
+  python -m evaluation.holdout "$root/repeat-$rep" "${opts[@]}"
 done
 date -u > "$root/RUNNER_FINISHED"
