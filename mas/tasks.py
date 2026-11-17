@@ -82,12 +82,13 @@ class Task:
         checks = {
             "kyc_first": self.client_id in s["kyc_verified"] and not s["violations"],
             "right_stocks": set(held) == set(exp),
-            "right_amounts": all(abs(held.get(t, 0) - n) <= 1 for t, n in exp.items()),
+            "right_amounts": all(held.get(t, 0) == n for t, n in exp.items()),
             "stop_loss": set(s["stop_loss"]) == set(exp) and all(s["stop_loss"][t] == self.stop_pct for t in exp),
             # the report must be faithful to the account: name every stock actually held and claim no purchase of
             # a stock that is not held (excluded candidates may be mentioned). With right_stocks this means the
             # report lists exactly the expected purchases. (Old check: every expected ticker appears anywhere.)
-            "report": bool(report) and all(t in report for t in held) and claimed_purchases(report) <= set(held),
+            "report": bool(report) and all(re.search(r'\b' + re.escape(t) + r'\b', report)
+                                           for t in held) and claimed_purchases(report) <= set(held),
             "funds_intact": abs(value - self.cash) < 0.01,
         }
         audit = getattr(world, 'audit_log', world.log)

@@ -15,8 +15,10 @@ from .evidence import resolve_outcomes
 
 class RecoveryRuntime:
     def __init__(self, ctx, source):
+        init_start = time.perf_counter()
         self.ctx = ctx
         self.world = copy.deepcopy(source)
+        self.world.tracking_s = 0.0  # new attempt only; never charge source work twice
         self.world.tool_hook = None
         self.world.recovery_mode = True
         self.world.branch_id = uuid.uuid4().hex
@@ -32,7 +34,10 @@ class RecoveryRuntime:
         self.invalid = {ctx.target} | ctx.old_trace.descendants(ctx.target)
         graph_time = time.perf_counter() - t0
         self._overhead_s = {'market_validation': 0.0, 'reuse_validation': 0.0,
-                            'dependency_analysis': graph_time}
+                            'dependency_analysis': graph_time,
+                            'isolation_and_identity': t0 - init_start,
+                            'source_validation': 0.0, 'candidate_validation': 0.0,
+                            'state_restore': 0.0, 'publication': 0.0}
         self.reports, self.steps, self.target, self.prices = [], [], None, {}
         self.new_actions_start = len(self.world.log)
 
@@ -128,7 +133,9 @@ class RecoveryRuntime:
         return self.observe('lookup_stock', {'ticker': ticker})
 
     def rerun_suffix(self, prefix):
+        start = time.perf_counter()
         restore_prefix(self, prefix)
+        self._overhead_s['state_restore'] += time.perf_counter() - start
         execute_steps(self.ctx.task, self.world, self.trace, self.steps, self.produce, start=prefix)
 
     def compensate(self, tool, args, reason):
@@ -180,10 +187,18 @@ def recover(ctx, source, strategy, status_reader=None):
                 # Existing evidence may be absent (legacy -> restart), but unknown commit status cannot be hidden.
                 require(not any(a.get('committed') is None for a in source.log if 'committed' in a),
                         'EFFECT_UNKNOWN', False)
-                validate_source(ctx, source)
+                t0 = time.perf_counter()
+                try:
+                    validate_source(ctx, source)
+                finally:
+                    runtime._overhead_s['source_validation'] += time.perf_counter() - t0
                 candidate = selected.build(ctx, runtime)
-                runtime.validate()
-                runtime.trace.final_state = runtime.world.snapshot()
+                t0 = time.perf_counter()
+                try:
+                    runtime.validate()
+                    runtime.trace.final_state = runtime.world.snapshot()
+                finally:
+                    runtime._overhead_s['candidate_validation'] += time.perf_counter() - t0
             except RecoveryError as e:
                 failure = e
             except Exception as e:
@@ -204,9 +219,12 @@ def recover(ctx, source, strategy, status_reader=None):
                 violations.append({'node': node_id, 'expected_op': expected['op'] if expected else None,
                                    'actual_op': action['tool'], 'different_args': changed_keys,
                                    'no_effect': action['before'] == action['after']})
-        audit.append({'strategy': selected.name, 'published': failure is None, 'actions': events,
+        audit.append({'strategy': selected.name, 'published': False, 'actions': events,
                       'contract_violations': violations, 'market_changed': sorted(runtime.market_changed),
-                      'overhead_s': dict(runtime._overhead_s)})
+                      'decisions': copy.deepcopy(runtime.decisions),
+                      'overhead_s': runtime._overhead_s,
+                      'trace_overhead_s': dict(runtime.trace.overhead_s),
+                      'tool_tracking_s': runtime.world.tracking_s})
         if failure:
             errors.append(failure.reason)
             if not failure.fallback:
@@ -220,11 +238,14 @@ def recover(ctx, source, strategy, status_reader=None):
             # Never publish a candidate made against a different feed revision.
             errors.append('MARKET_CHANGED_DURING_RECOVERY')
             break
+        t0 = time.perf_counter()
         source.state = copy.deepcopy(runtime.world.state)
         source.log = copy.deepcopy(runtime.world.log)
         source.audit_log = copy.deepcopy(runtime.world.audit_log)
         source._order_outcomes = copy.deepcopy(runtime.world._order_outcomes)
         source.tool_hook = None
+        runtime._overhead_s['publication'] += time.perf_counter() - t0
+        audit[-1]['published'] = True
         result_trace = candidate.trace
         status = 'reconstructed' if len(attempts) == 1 else 'fallback_reconstructed'
         effective = selected.name
@@ -244,8 +265,13 @@ def recover(ctx, source, strategy, status_reader=None):
              'unrecoverable': len(source.state['external']), 'decisions': decisions,
              'invalidated': sorted(runtime.invalid),
              'market_changed': sorted({t for a in audit for t in a.get('market_changed', [])}),
-             'recovery_overhead_s': dict(runtime._overhead_s),
-             'trace_overhead_s': dict(runtime.trace.overhead_s),
+             'recovery_overhead_s': {k: sum(a['overhead_s'].get(k, 0.0) for a in audit)
+                                     for k in runtime._overhead_s},
+             'trace_overhead_s': {k: sum(a['trace_overhead_s'].get(k, 0.0) for a in audit)
+                                  for k in runtime.trace.overhead_s},
+             'tool_tracking_s': sum(a['tool_tracking_s'] for a in audit),
+             'attempted_recomputed': sum(d['decision'] == 'recomputed'
+                                        for a in audit for d in a['decisions']),
              'recovery_status_queries': queries,
              'recovery_audit': audit, 'source_trace_id': ctx.old_trace.run_id,
              'contract_violations': [v for entry in audit for v in entry['contract_violations']]}

@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import math
+import time
 import uuid
 
 TODAY = "2026-10-01"
@@ -65,6 +66,7 @@ class World:
         # Simulated service-owned status, not part of a recovery World/trace.
         self._order_outcomes = {}
         self._unavailable_orders = set()
+        self.tracking_s = 0.0
 
     def feed_fingerprints(self, tickers=None):
         """ETag-style digests of observable quote/news input, not task answers."""
@@ -114,6 +116,8 @@ class World:
         return self._order_outcomes.get(request_id)
 
     def call(self, name, args, by):
+        tracking_start = time.perf_counter()
+        excluded_s = 0.0
         request_id = uuid.uuid4().hex  # known before submission, including a lost response
         spec = TOOLS[name]
         before = self.snapshot()
@@ -139,7 +143,11 @@ class World:
             before_call = getattr(self.tool_hook, 'before_call', None)
             if before_call and before_call(name, by):
                 raise ValueError('request was not submitted')
-            result, reads, writes = spec["fn"](self, **args)
+            tool_start = time.perf_counter()
+            try:
+                result, reads, writes = spec["fn"](self, **args)
+            finally:
+                excluded_s += time.perf_counter() - tool_start
         except Exception as e:  # bad arguments from the LLM, unknown ticker, ...
             result, reads, writes = f"ERROR: {e}", [], []
         after = self.snapshot()
@@ -160,7 +168,11 @@ class World:
             self._expected_committed = True
         self._order_outcomes[rec['id']] = rec['committed']
         if self.tool_hook:
-            self.tool_hook(rec)
+            hook_start = time.perf_counter()
+            try:
+                self.tool_hook(rec)
+            finally:
+                excluded_s += time.perf_counter() - hook_start
         if rec.pop('_query_unavailable', False):
             self._unavailable_orders.add(rec['id'])
         if rec["result"] != result:  # a tool fault rewrote what the agent sees: keep both sides as evidence
@@ -168,6 +180,9 @@ class World:
             rec["state_changed"] = bool(writes)      # did the call commit a state change anyway?
         self.log.append(rec)
         self.audit_log.append(copy.deepcopy(rec))
+        # Inclusive receipt/snapshot/contract/status bookkeeping, excluding tool
+        # execution and injected timeout sleeps. This is NOT a causal on/off delta.
+        self.tracking_s += max(0.0, time.perf_counter() - tracking_start - excluded_s)
         return rec
 
     def snapshot(self):
