@@ -13,6 +13,11 @@ traces passed the independent release audit. See the
 [reuse provenance](runs/phase2-final-muse-20261117/PROVENANCE.md), and
 [figures](runs/phase2-final-muse-20261117/committed/figs).
 
+Figure 5 is a post-hoc graph diagnostic, not measured recovery execution or a proof
+that declared-use edges are safe. Its changed-node count compares independently
+sampled traces and can include benign variation. Use the provenance audit for the
+missing-edge analysis and the final report for actual retained/recomputed work.
+
 Across 48 main task/fault pairs, restart, selective and change-aware each achieved
 48/48 final-state correctness and 38/48 safe completion. Selective and change-aware
 used **14.1% and 27.5% fewer total tokens** than restart, respectively, including
