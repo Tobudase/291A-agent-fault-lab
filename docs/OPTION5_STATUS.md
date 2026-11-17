@@ -1,6 +1,6 @@
 # Option 5 · 课程交付状态（2026-11-17）
 
-冻结的 v5.1 实验已完成，覆盖 6 个开发与回归任务。课程总评估要求开发与评估工作负载分离。当前分支仍缺独立评估结果和可提交的最终 PDF。[课程总要求](https://docs.google.com/document/d/1WrtrdqP54ATGRPtq9TN3vkBFc1F8ESvkqWu9AAuvIkU/mobilebasic?tab=t.0) · [项目 5 原文](https://docs.google.com/document/d/1WrtrdqP54ATGRPtq9TN3vkBFc1F8ESvkqWu9AAuvIkU/mobilebasic?tab=t.6lujzhx8viex)
+开发集 T1–T6 和独立评估集 H5–H8 均已完成。最终 PDF 汇总 Phase 1、Phase 2、跨任务验证和 tracking 对照。[最终 PDF](CSE291A-Project5-Final.pdf) · [课程总要求](https://docs.google.com/document/d/1WrtrdqP54ATGRPtq9TN3vkBFc1F8ESvkqWu9AAuvIkU/mobilebasic?tab=t.0) · [项目 5 原文](https://docs.google.com/document/d/1WrtrdqP54ATGRPtq9TN3vkBFc1F8ESvkqWu9AAuvIkU/mobilebasic?tab=t.6lujzhx8viex)
 
 | 课程关注点 | 已有证据 |
 | --- | --- |
@@ -12,10 +12,10 @@
 
 **结果。** 主矩阵的 48 个任务–故障组合中，restart、selective、change-aware 和 reconcile 各自最终正确 48/48、安全完成 38/48。28 个原本不安全的案例中挽救 18 个，其余 10 个已发生泄露。相对 restart，selective 和 change-aware 的平均端到端 tokens 分别降低 14.1% 和 27.5%。reconcile 降低 43.0%，其收益包含确定性执行的贡献。独立的 verify 基线安全完成 42/48。以上数字来自同一批 Muse Glimmer 30B 实验。[最终报告](../runs/phase2-final-muse-20261117/FINAL_REPORT.md) · [复用审计](../runs/phase2-final-muse-20261117/PROVENANCE.md)
 
-**剩余交付**
+**独立评估与 tracking**
 
-1. **独立评估。** 冻结策略、prompt、checker 与预算，采用此前未用于开发的新任务。可选规模为 4 个新任务、3 类故障、5 种方法，各重复 3 次，加 24 条 clean 对照，共 204 条计划记录。保留失败并报告配对差值和波动。现有 T1/T6 仅在三个故障组合上各有三次重复。
-2. **正式报告。** 整合 Phase 1 的传播路径和 Phase 2 的成本、成功与失败案例，交代相关工作、限制和项目经验。12 月 10 日到期。正文 4–6 页（含图表，参考文献另计），双栏，10 pt 字号、12 pt 行距，Times Roman 或相近字体，版心 7 × 9 英寸，带页码，以 PDF 提交。[课程报告规范](https://cseweb.ucsd.edu/~yiying/cse291a-fall26/project/)
-3. **建议加强开销论证。** 已测 live tracking 组件耗时，以及离线图查询和存储开销。可在远程环境回放同一批工具事件，对照 tracking 开关或记录粒度，报告 CPU 时间、内存与遗漏依赖。课程未指定必须采用此实验设计。
+- H5–H8 覆盖四个新任务、三类故障、五种方法和三次重复。204 条记录全部重算通过，其中有 24 条 clean 对照。change-aware 在 36 次故障暴露中安全完成 36 次，相对 restart 节省 25.3% 总 tokens，selective 节省 18.4%。六条未注册客户 pilot 单独保留。[独立结果](../runs/phase2-holdout-muse-20261117/SUMMARY.md)
+- 同样的六条开发集控制轨迹在 Nautilus 上回放。仅消息依赖漏掉 15/62 条边，加入状态读写后漏边为 0，每条 trace 相对关闭 tracking 的配对 CPU 增量中位数为 169.9 µs，再复制 checkpoint 后为 325.1 µs。范围限于预解码事件。[原始样本](../runs/phase2-holdout-muse-20261117/tracking.json)
+- 英文 PDF 共五页，正文双栏、10 pt 字号 / 12 pt 行距，覆盖问题、方法、传播、复用审计、故障边界、项目经验与相关工作。[课程报告规范](https://cseweb.ucsd.edu/~yiying/cse291a-fall26/project/)
 
 当前结论适用于已知故障位置、串行模拟账户及给定任务契约。报告文本由启发式规则检查，无合格标的时恢复会以 NO_ELIGIBLE_STOCKS 停止。[冻结方案](FINAL_PROTOCOL.md) · [Notion 项目主页](https://app.notion.com/p/Phase-2-Selective-Recovery-3fd41998e22a8028bd80c0dbc6f41e9e)

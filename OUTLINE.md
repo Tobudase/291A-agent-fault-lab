@@ -14,7 +14,7 @@ recomputation as full recovery.
 
 ---
 
-Current submission status and the remaining evaluation and writing work are documented in [Option 5 status](docs/OPTION5_STATUS.md).
+This historical planning outline is superseded by the [final course PDF](docs/CSE291A-Project5-Final.pdf) and [Option 5 evidence](docs/OPTION5_STATUS.md).
 
 ## Storyline (one paragraph)
 
@@ -114,8 +114,8 @@ individual rows with T6 fixes or v5 results and present them as one experiment.
 | Oct 28 | **Phase 1 report + code due**; final Muse runs (done) | all |
 | Nov 10 | selective recovery v1: invalid set, per-node snapshots, rerun with reuse | implemented in `mas/recover/`; see Phase 2 analysis |
 | Nov 17 | reuse validity check vs. clean runs; compensating actions | completed early; see `runs/PHASE2_PROVENANCE.md` and reconcile strategy |
-| Nov 24 | changed-environment cases (irreversible effects, drift); precision vs. tracking overhead | v5.1 covers eight market changes, component timings and saved-trace graph analysis. A controlled tracking on/off comparison remains open. |
-| Dec 1 | final experiments frozen: selective vs. restart vs. verify, same fault schedules | 524 v5.1 traces audited, including repeats and drift controls. Independent workload evaluation and final paper remain open. |
+| Nov 24 | changed-environment cases (irreversible effects, drift); precision vs. tracking overhead | v5.1 covers eight market changes, component timings and saved-trace graph analysis. The independent extension includes controlled off/message/RAW/checkpoint replay. |
+| Dec 1 | final experiments frozen: selective vs. restart vs. verify, same fault schedules | 524 v5.1 traces audited, including repeats and drift controls. H5–H8 add 204 audited observations; the final PDF is linked above. |
 | Dec 10 | **final report + code due** | all |
 
 ## Phase 1 report (1–2 pages) = a short cut of the sections above

@@ -6,10 +6,9 @@ compare full restart, always-verify, selective recovery, change-aware recovery a
 
 ## Final Phase 2 release (v5.1)
 
-**Course submission status (17 November 2026).** The frozen T1–T6 experiments
-are complete. A separate evaluation workload and the course-format final PDF
-remain open. See the [Option 5 evidence and remaining work](docs/OPTION5_STATUS.md)
-and the [Phase 2 Notion overview](https://app.notion.com/p/Phase-2-Selective-Recovery-3fd41998e22a8028bd80c0dbc6f41e9e).
+**Course report and independent evaluation.** [Final PDF](docs/CSE291A-Project5-Final.pdf) · [Option 5 evidence](docs/OPTION5_STATUS.md) · [Notion](https://app.notion.com/p/Phase-2-Selective-Recovery-3fd41998e22a8028bd80c0dbc6f41e9e).
+
+Four frozen within-family holdout tasks (H5–H8) produced 204 audited episodes, including 24 clean controls. Change-aware recovery finished safely in 36/36 fault exposures and used 25.3% fewer end-to-end tokens than restart. Selective saved 18.4%. All three repeats used the same task and fault schedule. Message-only tracking omitted 15/62 reference edges; adding state RAW edges recovered all 62, with a median paired CPU increment of 169.9 µs per trace versus off. The replay covers predecoded events. [Independent evaluation](runs/phase2-holdout-muse-20261117/SUMMARY.md) · [Protocol](evaluation/PROTOCOL.md) · [Remote reproduction](docs/REMOTE_REPRODUCTION.md).
 
 **Completed November 17, 2026, on Nautilus:** 149 tests passed; all 524 archived
 traces passed the independent release audit. See the
