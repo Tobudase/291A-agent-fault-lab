@@ -6,6 +6,11 @@ compare full restart, always-verify, selective recovery, change-aware recovery a
 
 ## Final Phase 2 release (v5.1)
 
+**Course submission status (17 November 2026).** The frozen T1–T6 experiments
+are complete. A separate evaluation workload and the course-format final PDF
+remain open. See the [Option 5 evidence and remaining work](docs/OPTION5_STATUS.md)
+and the [Phase 2 Notion overview](https://app.notion.com/p/Phase-2-Selective-Recovery-3fd41998e22a8028bd80c0dbc6f41e9e).
+
 **Completed November 17, 2026, on Nautilus:** 149 tests passed; all 524 archived
 traces passed the independent release audit. See the
 [final report](runs/phase2-final-muse-20261117/FINAL_REPORT.md),
