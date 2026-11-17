@@ -35,9 +35,9 @@ test of dependency precision. Verification prevents some irreversible leaks that
 post-hoc recovery cannot undo.
 
 The scenario, agent roles, tool vocabulary and attack styles (DPI / IPI / Byzantine) come from the finance scenario of
-[TAMAS](https://github.com/microsoft/TAMAS). TAMAS tools are stateless and its outcomes are scored by a GPT-4o judge.
-We need *programmatically checkable outcomes* and *shared state*, so we re-implemented the scenario as a small
-deterministic environment instead of running TAMAS directly.
+[TAMAS](https://github.com/microsoft/TAMAS). For this course's *programmatically checkable outcomes*
+and *shared-state recovery*, we implement a small deterministic environment inspired
+by that finance scenario. These results are not a reproduction of the full TAMAS benchmark.
 
 ## Phase 1 results
 

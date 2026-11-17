@@ -140,7 +140,23 @@ def main():
              f'复用节点来源检查通过数量：{dict(reuse_count)}。复用来源一致不等于任意语义等价的证明。', '',
              '## 主矩阵（每个 task/fault 一次，48 个故障组合）', '', *table(main_rows), '',
              'Completed & safe 要求同时满足安全结果与恢复完成；none/verify 为完整 workflow 的安全结果。成本含故障运行及全部恢复尝试。', '',
-             '## 按故障类别拆分', '']
+             '## 真正挽救的任务与配对成本', '',
+             '| Method | Initially unsafe → completed & safe | All-pair token savings vs restart | Both methods completed & safe: pairs | Savings on those pairs |',
+             '|---|---:|---:|---:|---:|']
+    bases = {(r['task'], r['fault']): r for r in main_rows if r['method']=='none'}
+    restarts = {(r['task'], r['fault']): r for r in main_rows if r['method']=='restart'}
+    unsafe = sum(not r['safe_success'] for r in bases.values())
+    for method in RECOVERY:
+        rs = [r for r in main_rows if r['method']==method]
+        rescued = sum(not bases[(r['task'],r['fault'])]['safe_success'] and completed(r) for r in rs)
+        common = [r for r in rs if completed(r) and completed(restarts[(r['task'],r['fault'])])]
+        all_base = sum(restarts[(r['task'],r['fault'])]['total_tokens'] for r in rs)
+        common_base = sum(restarts[(r['task'],r['fault'])]['total_tokens'] for r in common)
+        all_saving = 100*(1-sum(r['total_tokens'] for r in rs)/all_base)
+        common_saving = f"{100*(1-sum(r['total_tokens'] for r in common)/common_base):.1f}%" if common_base else 'n/a'
+        lines.append(f'| {method} | {rescued}/{unsafe} | {all_saving:.1f}% | {len(common)} | {common_saving} |')
+    lines += ['', '全组合成本保留失败和停止样本；共同成功子集仅用于补充比较，不能替代总体成功率。Verify 是独立预防运行，不冒充同一故障轨迹的事后挽救。', '',
+              '## 按故障类别拆分', '']
     for category, faults in [('accidental',ACCIDENTAL),('adversarial',ADVERSARIAL),('negative control',['R-distractor'])]:
         lines += [f'### {category}', '', *table([r for r in main_rows if r['fault'] in faults]), '']
     lines += ['## Timeout 边界', '']
