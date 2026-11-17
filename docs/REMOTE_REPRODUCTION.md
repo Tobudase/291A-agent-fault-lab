@@ -29,3 +29,32 @@ checks. Neither marker implies all recovery methods succeeded.
 
 Temporary runner pods and the run-specific API Secret can be removed after the
 result copy is verified. Keep the shared project PVC and all historical results.
+
+## Independent evaluation and tracking replay
+
+Use the frozen H5–H8 task manifest and model adapter from commit `2b6aed7`.
+The `evaluation/` directory contains the protocol, runner and audit. The simulator
+only recognizes registered clients. A preflight validates the workload before any
+model calls. The six saved observations from an earlier invalid-client pilot are
+archived separately with their original manifest.
+
+On Nautilus, provide the same locked dependencies and school endpoint. Kubernetes
+passes env-file values literally, so provide environment values without wrapping
+quotes. Use a verified issuer chain if required. The tracking input is the original
+`committed/` matrix containing `T1` through `T6` clean source traces. Set
+`TRACKING_INPUT` to that folder. Set `LLM_MODEL=api-muse-glimmer-30b`,
+`LLM_TEMPERATURE=0`, and leave the model output cap at its server default.
+
+```bash
+bash evaluation/remote.sh /work/independent-results
+```
+
+The four task workers share one endpoint. Repeats run sequentially. Every repeat
+saves 68 traces and matching row data. An interrupted group can be resumed using
+its saved selection and code signatures. The CPU replay operates on already
+decoded events using the standard Trace and World snapshot methods. It makes no
+model calls. The final audit rescans the saved account and historical records,
+checks exact source pairing and recorded use on each attempt, and recomputes CPU
+summaries and omitted edges from 720 observations. Copy the release back and
+verify the relative paths in its SHA-256 manifest. Regenerate the course PDF
+with `python reporting/course_pdf.py` using the audited artifacts and ReportLab.
