@@ -133,7 +133,7 @@ class Trace:
 
     def to_dict(self):
         return {"task_id": self.task_id, "nodes": [asdict(n) for n in self.nodes.values()],
-                "edges": sorted(self.edges()), 'schema_version': 4, 'run_id': self.run_id,
+                "edges": [list(edge) for edge in sorted(self.edges())], 'schema_version': 4, 'run_id': self.run_id,
                 'source_trace_id': self.source_trace_id, 'context_hash': self.context_hash,
                 'checkpoints': self.checkpoints, 'final_state': self.final_state, 'new_cost': self.new_cost,
                 'market_versions': self.market_versions, 'news_versions': self.news_versions,
